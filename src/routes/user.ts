@@ -47,10 +47,8 @@ export const createRouter = (ctx: AppContext) => {
     '/me',
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
-      console.log('Doing some stuff');
 
       const agent = await getSessionAgent(req, res, ctx);
-      console.log('Agent:', agent);
       if (!agent) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
@@ -74,9 +72,7 @@ export const createRouter = (ctx: AppContext) => {
   // GET /users/:handle - Get a user by handle
   router.get('/:handle', async (req: Request, res: Response) => {
     try {
-      console.log('Fetching user with handle:', req.params.handle);
       const user = await getUserByHandle(req.params.handle);
-      console.log(user);
       if (user) {
         res.json(user);
       } else {

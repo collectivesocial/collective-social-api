@@ -86,7 +86,6 @@ export const createRouter = (ctx: AppContext): RequestListener => {
     '/oauth/callback',
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
-      console.log('OAuth callback invoked');
 
       const params = new URLSearchParams(req.originalUrl.split('?')[1]);
       try {
@@ -101,7 +100,6 @@ export const createRouter = (ctx: AppContext): RequestListener => {
             path: '/',
           },
         });
-        console.log({ session });
 
         // If the user is already signed in, destroy the old credentials
         if (session.did) {
