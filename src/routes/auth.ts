@@ -110,7 +110,12 @@ export const createRouter = (ctx: AppContext): RequestListener => {
         ctx.logger.error({ err }, 'oauth callback failed');
       }
 
-      return res.redirect('/');
+      // Redirect back to the React app
+      const redirectUrl =
+        config.nodeEnv === 'production'
+          ? config.serviceUrl || 'http://localhost:5173'
+          : 'http://localhost:5173';
+      return res.redirect(redirectUrl);
     })
   );
 
