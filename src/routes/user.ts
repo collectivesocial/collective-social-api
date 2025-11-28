@@ -1,11 +1,13 @@
 import express, { Request, Response } from 'express';
+import { getUserByHandle } from '../models/user';
 const router = express.Router();
-const userModel = require('../models/userModel');
 
 // GET /users/:handle - Get a user by handle
 router.get('/:handle', async (req: Request, res: Response) => {
   try {
-    const user = await userModel.getUserByHandle(req.params.handle);
+    console.log('Fetching user with handle:', req.params.handle);
+    const user = await getUserByHandle(req.params.handle);
+    console.log(user);
     if (user) {
       res.json(user);
     } else {

@@ -5,28 +5,39 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node src/index.ts",
-    "dev": "nodemon src/index.ts",
+    "start": "ts-node src/index.ts",
+    "dev": "nodemon --exec ts-node src/index.ts",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,js,json}\""
+    "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
+    "lexgen": "lex gen-server ./src/lexicon ./lexicons/*"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "-": "^0.0.1",
     "@atproto/api": "^0.18.3",
+    "@atproto/common": "^0.5.1",
+    "@atproto/lexicon": "^0.5.2",
+    "@atproto/oauth-client-node": "^0.3.11",
+    "@atproto/sync": "^0.1.38",
     "dotenv": "^17.2.3",
+    "envalid": "^8.1.1",
     "express": "^5.1.0",
+    "http-terminator": "^3.2.0",
+    "iron-session": "^8.0.4",
+    "kysely": "^0.28.8",
     "nodemon": "^3.1.11",
     "pg": "^8.16.3",
     "save-dev": "^0.0.1-security"
   },
   "devDependencies": {
+    "@atproto/lex-cli": "^0.9.7",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.1",
     "@types/pg": "^8.15.6",
-    "prettier": "^3.7.1"
+    "prettier": "^3.7.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }
