@@ -15,7 +15,7 @@ import { handler } from '../lib/http';
 import { ifString } from '../lib/stringUtil';
 
 // Max age, in seconds, for static routes and assets
-const MAX_AGE = config.nodeEnv === 'production' ? 60 : 0;
+const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
 
 type Session = { did?: string };
 
@@ -30,6 +30,12 @@ async function getSessionAgent(
   const session = await getIronSession<Session>(req, res, {
     cookieName: 'sid',
     password: config.cookieSecret,
+    cookieOptions: {
+      secure: config.nodeEnv === 'production',
+      sameSite: 'lax',
+      httpOnly: true,
+      path: '/',
+    },
   });
   if (!session.did) return null;
 
@@ -80,6 +86,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
     '/oauth/callback',
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
+      console.log('OAuth callback invoked');
 
       const params = new URLSearchParams(req.originalUrl.split('?')[1]);
       try {
@@ -87,7 +94,14 @@ export const createRouter = (ctx: AppContext): RequestListener => {
         const session = await getIronSession<Session>(req, res, {
           cookieName: 'sid',
           password: config.cookieSecret,
+          cookieOptions: {
+            secure: config.nodeEnv === 'production',
+            sameSite: 'lax',
+            httpOnly: true,
+            path: '/',
+          },
         });
+        console.log({ session });
 
         // If the user is already signed in, destroy the old credentials
         if (session.did) {
@@ -113,8 +127,8 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       // Redirect back to the React app
       const redirectUrl =
         config.nodeEnv === 'production'
-          ? config.serviceUrl || 'http://localhost:5173'
-          : 'http://localhost:5173';
+          ? config.serviceUrl || 'http://127.0.0.1:5173'
+          : 'http://127.0.0.1:5173';
       return res.redirect(redirectUrl);
     })
   );
@@ -185,6 +199,12 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       const session = await getIronSession<Session>(req, res, {
         cookieName: 'sid',
         password: config.cookieSecret,
+        cookieOptions: {
+          secure: config.nodeEnv === 'production',
+          sameSite: 'lax',
+          httpOnly: true,
+          path: '/',
+        },
       });
 
       // Revoke credentials on the server

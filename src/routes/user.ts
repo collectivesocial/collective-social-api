@@ -19,6 +19,12 @@ async function getSessionAgent(
   const session = await getIronSession<Session>(req, res, {
     cookieName: 'sid',
     password: config.cookieSecret,
+    cookieOptions: {
+      secure: config.nodeEnv === 'production',
+      sameSite: 'lax',
+      httpOnly: true,
+      path: '/',
+    },
   });
   if (!session.did) return null;
 
@@ -41,8 +47,10 @@ export const createRouter = (ctx: AppContext) => {
     '/me',
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
+      console.log('Doing some stuff');
 
       const agent = await getSessionAgent(req, res, ctx);
+      console.log('Agent:', agent);
       if (!agent) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
