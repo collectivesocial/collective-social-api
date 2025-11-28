@@ -217,7 +217,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
 
       session.destroy();
 
-      return res.redirect('/');
+      return res.json({ success: true });
     })
   );
 
