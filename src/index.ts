@@ -5,6 +5,7 @@ import { createRouter as createAuthRouter } from './routes/auth';
 import { createRouter as createCollectionsRouter } from './routes/collections';
 import { createRouter as createMediaRouter } from './routes/media';
 import { createRouter as createAdminRouter } from './routes/admin';
+import { createRouter as createFeedbackRouter } from './routes/feedback';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
@@ -41,6 +42,9 @@ createAppContext().then((ctx) => {
 
   // Mount admin routes
   app.use('/admin', createAdminRouter(ctx));
+
+  // Mount feedback routes
+  app.use('/feedback', createFeedbackRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {

@@ -26,12 +26,24 @@ export type PublicReview = {
   updatedAt: Date;
 };
 
+export type Feedback = {
+  id: number;
+  userDid: string | null;
+  email: string | null;
+  message: string;
+  status: string;
+  adminNotes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
   media_items: MediaItem;
   users: User;
   reviews: PublicReview;
+  feedback: Feedback;
 };
 
 // Migrations
@@ -237,6 +249,40 @@ migrations['004'] = {
 
     // Re-add notes column to review table
     await db.schema.alterTable('review').addColumn('notes', 'text').execute();
+  },
+};
+
+migrations['005'] = {
+  async up(db: Kysely<unknown>) {
+    // Create feedback table
+    await db.schema
+      .createTable('feedback')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('userDid', 'varchar')
+      .addColumn('email', 'varchar')
+      .addColumn('message', 'text', (col) => col.notNull())
+      .addColumn('status', 'varchar', (col) => col.notNull().defaultTo('new'))
+      .addColumn('adminNotes', 'text')
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull())
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull())
+      .execute();
+
+    // Create index for status queries
+    await db.schema
+      .createIndex('feedback_status_idx')
+      .on('feedback')
+      .column('status')
+      .execute();
+
+    // Create index for userDid queries
+    await db.schema
+      .createIndex('feedback_user_did_idx')
+      .on('feedback')
+      .column('userDid')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('feedback').execute();
   },
 };
 
