@@ -98,7 +98,7 @@ export const createRouter = (ctx: AppContext) => {
         const { did } = req.params;
 
         // Check if already following
-        const listResponse = await agent.api.com.atproto.repo.listRecords({
+        const listResponse = await agent.com.atproto.repo.listRecords({
           repo: agent.did!,
           collection: 'app.bsky.graph.follow',
         });
