@@ -217,6 +217,7 @@ export const createRouter = (ctx: AppContext) => {
       if (!agent) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
+      console.log({ req });
 
       const { title, rating, status, review, mediaType, creator, mediaItemId } =
         req.body;

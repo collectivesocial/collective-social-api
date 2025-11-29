@@ -78,39 +78,42 @@ export const createRouter = (ctx: AppContext) => {
         const results = await searchBooks(query);
 
         // For each result, check if it exists in our database
-        const enrichedResults = await Promise.all(
-          results.map(async (result) => {
-            const isbn = extractISBN(result);
-            let dbItem = null;
+        const enrichedResults = (
+          await Promise.all(
+            results.map(async (result) => {
+              const isbn = extractISBN(result);
+              if (!isbn) return null;
+              let dbItem = null;
 
-            // Check database if we have an ISBN
-            if (isbn) {
-              dbItem = await ctx.db
-                .selectFrom('media_items')
-                .selectAll()
-                .where('isbn', '=', isbn)
-                .where('mediaType', '=', 'book')
-                .executeTakeFirst();
-            }
+              // Check database if we have an ISBN
+              if (isbn) {
+                dbItem = await ctx.db
+                  .selectFrom('media_items')
+                  .selectAll()
+                  .where('isbn', '=', isbn)
+                  .where('mediaType', '=', 'book')
+                  .executeTakeFirst();
+              }
 
-            return {
-              title: result.title,
-              author: result.author_name?.[0] || null,
-              publishYear: result.first_publish_year || null,
-              isbn: isbn || null,
-              coverImage: result.cover_i
-                ? getCoverUrl(result.cover_i, 'M')
-                : null,
-              // Include database info if exists
-              inDatabase: !!dbItem,
-              totalReviews: dbItem?.totalReviews || 0,
-              averageRating: dbItem?.averageRating
-                ? parseFloat(dbItem.averageRating.toString())
-                : null,
-              mediaItemId: dbItem?.id || null,
-            };
-          })
-        );
+              return {
+                title: result.title,
+                author: result.author_name?.[0] || null,
+                publishYear: result.first_publish_year || null,
+                isbn: isbn || null,
+                coverImage: result.cover_i
+                  ? getCoverUrl(result.cover_i, 'M')
+                  : null,
+                // Include database info if exists
+                inDatabase: !!dbItem,
+                totalReviews: dbItem?.totalReviews || 0,
+                averageRating: dbItem?.averageRating
+                  ? parseFloat(dbItem.averageRating.toString())
+                  : null,
+                mediaItemId: dbItem?.id || null,
+              };
+            })
+          )
+        ).filter((item): item is NonNullable<typeof item> => item !== null);
 
         res.json({
           results: enrichedResults,

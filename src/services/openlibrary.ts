@@ -102,6 +102,15 @@ export function getCoverUrl(
 export function extractISBN(
   result: OpenLibrarySearchResult | OpenLibraryBook
 ): string | undefined {
+  // Check ia array for ISBN entries (e.g., 'isbn_9780439064866')
+  if ('ia' in result && Array.isArray(result.ia)) {
+    const isbnEntry = result.ia.find((entry) => entry.startsWith('isbn_'));
+    if (isbnEntry) {
+      const isbn = isbnEntry.replace('isbn_', '');
+      return isbn;
+    }
+  }
+
   if ('isbn' in result && result.isbn && result.isbn.length > 0) {
     // Prefer ISBN-13
     const isbn13 = result.isbn.find((isbn) => isbn.length === 13);
