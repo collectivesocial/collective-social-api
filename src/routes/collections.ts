@@ -70,6 +70,7 @@ export const createRouter = (ctx: AppContext) => {
             name: record.value.name,
             description: record.value.description || null,
             visibility: record.value.visibility || 'public',
+            isDefault: record.value.isDefault || false,
             purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
@@ -127,6 +128,164 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create collection');
         res.status(500).json({ error: 'Failed to create collection' });
+      }
+    })
+  );
+
+  // PUT /collections/:listUri - Update a collection
+  router.put(
+    '/:listUri',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { name, description, visibility } = req.body;
+
+      if (!name) {
+        return res.status(400).json({ error: 'Name is required' });
+      }
+
+      try {
+        const listUri = decodeURIComponent(req.params.listUri);
+
+        // Extract DID from listUri to verify ownership
+        const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
+        if (!listDidMatch) {
+          return res.status(400).json({ error: 'Invalid list URI' });
+        }
+        const listOwnerDid = listDidMatch[1];
+
+        // Check if the authenticated user owns this list
+        if (agent.did !== listOwnerDid) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to update this list' });
+        }
+
+        // Get current list record
+        const listsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.list',
+        });
+
+        const listRecord = listsResponse.data.records.find(
+          (record: any) => record.uri === listUri
+        );
+
+        if (!listRecord) {
+          return res.status(404).json({ error: 'List not found' });
+        }
+
+        const currentData = listRecord.value as any;
+
+        // Extract rkey from listUri
+        const rkeyMatch = listUri.match(/\/([^\/]+)$/);
+        if (!rkeyMatch) {
+          return res.status(400).json({ error: 'Invalid list URI' });
+        }
+        const rkey = rkeyMatch[1];
+
+        // Update the record
+        const updatedRecord: AppCollectiveSocialList.Record = {
+          ...currentData,
+          name,
+          description: description || undefined,
+          visibility: visibility || currentData.visibility,
+        };
+
+        await agent.api.com.atproto.repo.putRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.list',
+          rkey: rkey,
+          record: updatedRecord as any,
+        });
+
+        res.json({
+          success: true,
+          name: updatedRecord.name,
+          description: updatedRecord.description,
+          visibility: updatedRecord.visibility,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to update collection');
+        res.status(500).json({ error: 'Failed to update collection' });
+      }
+    })
+  );
+
+  // DELETE /collections/:listUri - Delete a collection
+  router.delete(
+    '/:listUri',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        const listUri = decodeURIComponent(req.params.listUri);
+
+        // Extract DID from listUri to verify ownership
+        const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
+        if (!listDidMatch) {
+          return res.status(400).json({ error: 'Invalid list URI' });
+        }
+        const listOwnerDid = listDidMatch[1];
+
+        // Check if the authenticated user owns this list
+        if (agent.did !== listOwnerDid) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to delete this list' });
+        }
+
+        // Get the list record to check if it's the default list
+        const listsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.list',
+        });
+
+        const listRecord = listsResponse.data.records.find(
+          (record: any) => record.uri === listUri
+        );
+
+        if (!listRecord) {
+          return res.status(404).json({ error: 'List not found' });
+        }
+
+        const listData = listRecord.value as any;
+
+        // Prevent deletion of default list
+        if (listData.isDefault) {
+          return res
+            .status(403)
+            .json({ error: 'Cannot delete the default Inbox list' });
+        }
+
+        // Extract rkey from listUri
+        const rkeyMatch = listUri.match(/\/([^\/]+)$/);
+        if (!rkeyMatch) {
+          return res.status(400).json({ error: 'Invalid list URI' });
+        }
+        const rkey = rkeyMatch[1];
+
+        // Delete the record from the user's repo
+        await agent.api.com.atproto.repo.deleteRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.list',
+          rkey: rkey,
+        });
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete collection');
+        res.status(500).json({ error: 'Failed to delete collection' });
       }
     })
   );
@@ -626,6 +785,7 @@ export const createRouter = (ctx: AppContext) => {
             name: record.value.name,
             description: record.value.description || null,
             visibility: record.value.visibility || 'public',
+            isDefault: record.value.isDefault || false,
             purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,

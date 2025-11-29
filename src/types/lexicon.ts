@@ -9,6 +9,7 @@ export namespace AppCollectiveSocialList {
     name: string;
     description?: string;
     visibility?: 'public' | 'private';
+    isDefault?: boolean;
     purpose: string;
     avatar?: {
       cid: string;

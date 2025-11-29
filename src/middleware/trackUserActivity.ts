@@ -55,6 +55,42 @@ export function createUserActivityTracker(ctx: AppContext) {
             )
             .execute();
 
+          // Create default "Inbox" list for new user
+          try {
+            const oauthSession = await ctx.oauthClient.restore(session.did);
+            if (oauthSession) {
+              const { Agent } = await import('@atproto/api');
+              const agent = new Agent(oauthSession);
+
+              const defaultListRecord = {
+                $type: 'app.collectivesocial.list',
+                name: 'Inbox',
+                description:
+                  'Your default inbox for recommendations and items to review',
+                visibility: 'public',
+                isDefault: true,
+                purpose: 'app.collectivesocial.defs#curatelist',
+                createdAt: now.toISOString(),
+              };
+
+              await agent.api.com.atproto.repo.createRecord({
+                repo: session.did,
+                collection: 'app.collectivesocial.list',
+                record: defaultListRecord as any,
+              });
+
+              ctx.logger.info(
+                { did: session.did },
+                'Created default Inbox list for new user'
+              );
+            }
+          } catch (err) {
+            ctx.logger.error(
+              { err, did: session.did },
+              'Failed to create default Inbox list'
+            );
+          }
+
           ctx.logger.info(
             { did: session.did },
             'New user first login recorded'

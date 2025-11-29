@@ -28,6 +28,11 @@
             "knownValues": ["public", "private"],
             "default": "public"
           },
+          "isDefault": {
+            "type": "boolean",
+            "description": "Whether this is the default inbox list. Only one per user, cannot be deleted.",
+            "default": false
+          },
           "purpose": {
             "type": "string",
             "description": "The purpose of the list, e.g. 'app.collectivesocial.defs#curatelist'.",
