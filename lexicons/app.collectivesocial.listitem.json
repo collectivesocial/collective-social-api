@@ -1,0 +1,71 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.listitem",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An item (media review) in a Collective Social collection list.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["list", "title", "createdAt"],
+        "properties": {
+          "list": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Reference (AT-URI) to the collection list."
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the media item.",
+            "maxGraphemes": 500,
+            "maxLength": 5000
+          },
+          "creator": {
+            "type": "string",
+            "description": "Creator/author of the media (e.g., book author, film director).",
+            "maxGraphemes": 200,
+            "maxLength": 2000
+          },
+          "mediaType": {
+            "type": "string",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, etc.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music"
+            ],
+            "maxLength": 64
+          },
+          "status": {
+            "type": "string",
+            "description": "Consumption status: want, in-progress, completed.",
+            "knownValues": ["want", "in-progress", "completed"],
+            "maxLength": 32
+          },
+          "rating": {
+            "type": "number",
+            "description": "Rating from 0 to 5, supports half-star increments (0.5 steps).",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "review": {
+            "type": "string",
+            "description": "Optional review or notes about the media item.",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this list item was created."
+          }
+        }
+      }
+    }
+  }
+}

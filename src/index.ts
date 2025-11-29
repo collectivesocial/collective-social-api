@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { createRouter as createUserRouter } from './routes/user';
 import { createRouter as createAuthRouter } from './routes/auth';
+import { createRouter as createCollectionsRouter } from './routes/collections';
 import { config } from './config';
 import { createAppContext } from './context';
 
@@ -25,6 +26,9 @@ createAppContext().then((ctx) => {
 
   // Mount user routes
   app.use('/users', createUserRouter(ctx));
+
+  // Mount collections routes
+  app.use('/collections', createCollectionsRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {
