@@ -404,6 +404,7 @@ export const createRouter = (ctx: AppContext) => {
         creator,
         mediaItemId,
         recommendedBy,
+        completedAt,
       } = req.body;
 
       if (!title) {
@@ -473,6 +474,7 @@ export const createRouter = (ctx: AppContext) => {
         if (existingItem) {
           const existingData = existingItem.value as any;
           const existingRecommendations = existingData.recommendations || [];
+          const oldStatus = existingData.status;
 
           // Merge recommendations, avoiding duplicates by DID
           const mergedRecommendations = [...existingRecommendations];
@@ -492,6 +494,14 @@ export const createRouter = (ctx: AppContext) => {
           }
           const rkey = rkeyMatch[1];
 
+          // Determine completedAt timestamp
+          let completedAtValue = existingData.completedAt;
+          if (status === 'completed' && completedAt) {
+            completedAtValue = completedAt;
+          } else if (status === 'completed' && !existingData.completedAt) {
+            completedAtValue = new Date().toISOString();
+          }
+
           // Update the record, keeping existing data but adding new information
           const updatedRecord: AppCollectiveSocialListitem.Record = {
             ...existingData,
@@ -508,6 +518,7 @@ export const createRouter = (ctx: AppContext) => {
             review: review !== undefined ? review : existingData.review,
             notes: notes !== undefined ? notes : existingData.notes,
             creator: creator || existingData.creator,
+            completedAt: completedAtValue,
             recommendations:
               mergedRecommendations.length > 0
                 ? mergedRecommendations
@@ -617,6 +628,42 @@ export const createRouter = (ctx: AppContext) => {
             }
           }
 
+          // Create feed event for status changes
+          if (status && status !== oldStatus && mediaType === 'book') {
+            try {
+              const profile = await agent.getProfile({ actor: agent.did! });
+              const userHandle = profile.data.handle;
+              const now = new Date();
+              let eventName = '';
+
+              if (status === 'want' && !oldStatus) {
+                // Only create "wants to read" event for new items
+                eventName = `${userHandle} wants to read "${title}"`;
+              } else if (
+                status === 'in-progress' &&
+                oldStatus !== 'in-progress'
+              ) {
+                eventName = `${userHandle} started reading "${title}"`;
+              } else if (status === 'completed' && oldStatus !== 'completed') {
+                eventName = `${userHandle} finished reading "${title}"`;
+              }
+
+              if (eventName) {
+                await ctx.db
+                  .insertInto('feed_events')
+                  .values({
+                    eventName,
+                    mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
+                    userDid: agent.did!,
+                    createdAt: now,
+                  } as any)
+                  .execute();
+              }
+            } catch (err) {
+              ctx.logger.error({ err }, 'Failed to create feed event');
+            }
+          }
+
           return res.json({
             uri: existingItem.uri,
             cid: existingItem.cid,
@@ -632,6 +679,7 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Item doesn't exist, create new one
+        const now = new Date();
         const listItemRecord: AppCollectiveSocialListitem.Record = {
           $type: 'app.collectivesocial.listitem',
           list: listUri,
@@ -643,9 +691,13 @@ export const createRouter = (ctx: AppContext) => {
           rating: rating !== undefined ? Number(rating) : undefined,
           review: review || undefined,
           notes: notes || undefined,
+          completedAt:
+            status === 'completed'
+              ? completedAt || now.toISOString()
+              : undefined,
           recommendations:
             newRecommendations.length > 0 ? newRecommendations : undefined,
-          createdAt: new Date().toISOString(),
+          createdAt: now.toISOString(),
         };
 
         // Create the record in the user's repo
@@ -719,6 +771,37 @@ export const createRouter = (ctx: AppContext) => {
               })
               .where('id', '=', mediaItemId)
               .execute();
+          }
+        }
+
+        // Create feed event for new items with status (books only)
+        if (status && mediaType === 'book') {
+          try {
+            const profile = await agent.getProfile({ actor: agent.did! });
+            const userHandle = profile.data.handle;
+            let eventName = '';
+
+            if (status === 'want') {
+              eventName = `${userHandle} wants to read "${title}"`;
+            } else if (status === 'in-progress') {
+              eventName = `${userHandle} started reading "${title}"`;
+            } else if (status === 'completed') {
+              eventName = `${userHandle} finished reading "${title}"`;
+            }
+
+            if (eventName) {
+              await ctx.db
+                .insertInto('feed_events')
+                .values({
+                  eventName,
+                  mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
+                  userDid: agent.did!,
+                  createdAt: now,
+                } as any)
+                .execute();
+            }
+          } catch (err) {
+            ctx.logger.error({ err }, 'Failed to create feed event');
           }
         }
 

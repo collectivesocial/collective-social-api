@@ -89,6 +89,11 @@
               }
             }
           },
+          "completedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this media item was completed (finished reading/watching)."
+          },
           "createdAt": {
             "type": "string",
             "format": "datetime",

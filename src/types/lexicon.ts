@@ -44,6 +44,7 @@ export namespace AppCollectiveSocialListitem {
     review?: string; // Public review stored in DB
     notes?: string; // Private notes, ATProto only
     recommendations?: Recommendation[];
+    completedAt?: string; // Timestamp when completed
     createdAt: string;
   }
 }
