@@ -59,7 +59,13 @@
           },
           "review": {
             "type": "string",
-            "description": "Optional review or notes about the media item.",
+            "description": "Public review of the media item that is also stored in the application database.",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "notes": {
+            "type": "string",
+            "description": "Private notes about the media item. Only visible to the owner, stored in ATProto only.",
             "maxGraphemes": 3000,
             "maxLength": 30000
           },

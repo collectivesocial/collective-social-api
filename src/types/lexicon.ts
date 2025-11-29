@@ -41,7 +41,8 @@ export namespace AppCollectiveSocialListitem {
       | 'music';
     status?: 'want' | 'in-progress' | 'completed';
     rating?: number; // 0-5, supports 0.5 increments
-    review?: string;
+    review?: string; // Public review stored in DB
+    notes?: string; // Private notes, ATProto only
     recommendations?: Recommendation[];
     createdAt: string;
   }

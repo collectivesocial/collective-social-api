@@ -329,6 +329,7 @@ export const createRouter = (ctx: AppContext) => {
                     ? record.value.rating
                     : null,
                 review: record.value.review || null,
+                notes: record.value.notes || null,
                 recommendations: record.value.recommendations || [],
                 createdAt: record.value.createdAt,
               };
@@ -383,6 +384,7 @@ export const createRouter = (ctx: AppContext) => {
         rating,
         status,
         review,
+        notes,
         mediaType,
         creator,
         mediaItemId,
@@ -442,6 +444,7 @@ export const createRouter = (ctx: AppContext) => {
           status: status || undefined,
           rating: rating !== undefined ? Number(rating) : undefined,
           review: review || undefined,
+          notes: notes || undefined,
           recommendations:
             recommendations.length > 0 ? recommendations : undefined,
           createdAt: new Date().toISOString(),
@@ -453,6 +456,42 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.listitem',
           record: listItemRecord as any,
         });
+
+        // If a public review is provided with rating and mediaItemId, save to database
+        if (
+          review &&
+          review.trim() &&
+          rating !== undefined &&
+          mediaItemId &&
+          mediaType
+        ) {
+          const now = new Date();
+
+          // Upsert review - one review per user per media item
+          await ctx.db
+            .insertInto('reviews')
+            .values({
+              authorDid: agent.did!,
+              mediaItemId: mediaItemId,
+              mediaType: mediaType,
+              rating: Number(rating),
+              review: review.trim(),
+              listItemUri: response.data.uri,
+              createdAt: now,
+              updatedAt: now,
+            } as any)
+            .onConflict((oc) =>
+              oc
+                .columns(['authorDid', 'mediaItemId', 'mediaType'])
+                .doUpdateSet({
+                  rating: Number(rating),
+                  review: review.trim(),
+                  listItemUri: response.data.uri,
+                  updatedAt: now,
+                })
+            )
+            .execute();
+        }
 
         // If we have a mediaItemId and a rating, update the aggregated stats
         if (mediaItemId && rating !== undefined) {
@@ -513,7 +552,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { rating, review } = req.body;
+      const { rating, review, notes } = req.body;
 
       try {
         const listUri = decodeURIComponent(req.params.listUri);
@@ -558,11 +597,12 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Update the record with new rating and/or review
+        // Update the record with new rating, review, and/or notes
         const updatedRecord: AppCollectiveSocialListitem.Record = {
           ...currentData,
           rating: rating !== undefined ? Number(rating) : currentData.rating,
           review: review !== undefined ? review : currentData.review,
+          notes: notes !== undefined ? notes : currentData.notes,
         };
 
         await agent.api.com.atproto.repo.putRecord({
@@ -571,6 +611,51 @@ export const createRouter = (ctx: AppContext) => {
           rkey: rkey,
           record: updatedRecord as any,
         });
+
+        // If public review is provided/updated with rating and mediaItemId, upsert to database
+        if (
+          review !== undefined &&
+          updatedRecord.rating !== undefined &&
+          mediaItemId
+        ) {
+          const mediaType = currentData.mediaType;
+
+          if (review && review.trim() && mediaType) {
+            const now = new Date();
+
+            // Upsert review
+            await ctx.db
+              .insertInto('reviews')
+              .values({
+                authorDid: agent.did!,
+                mediaItemId: mediaItemId,
+                mediaType: mediaType,
+                rating: Number(updatedRecord.rating),
+                review: review.trim(),
+                listItemUri: itemUri,
+                createdAt: now,
+                updatedAt: now,
+              } as any)
+              .onConflict((oc) =>
+                oc
+                  .columns(['authorDid', 'mediaItemId', 'mediaType'])
+                  .doUpdateSet({
+                    rating: Number(updatedRecord.rating),
+                    review: review.trim(),
+                    updatedAt: now,
+                  })
+              )
+              .execute();
+          } else if (review === '' || review === null) {
+            // Delete review if explicitly cleared
+            await ctx.db
+              .deleteFrom('reviews')
+              .where('authorDid', '=', agent.did!)
+              .where('mediaItemId', '=', mediaItemId)
+              .where('mediaType', '=', mediaType)
+              .execute();
+          }
+        }
 
         // Update aggregated stats if rating changed and we have a mediaItemId
         if (
