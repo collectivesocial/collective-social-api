@@ -101,12 +101,26 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
+        // Check if user already has a default list
+        const existingLists = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.list',
+        });
+
+        const hasDefaultList = existingLists.data.records.some(
+          (record: any) => record.value.isDefault === true
+        );
+
+        // Mark as default if this is the user's first list or they have no default
+        const isDefault = !hasDefaultList;
+
         const record: AppCollectiveSocialList.Record = {
           $type: 'app.collectivesocial.list',
           name,
           description: description || undefined,
           visibility: visibility || 'public',
           purpose: purpose || 'app.collectivesocial.defs#curatelist',
+          isDefault: isDefault || undefined,
           createdAt: new Date().toISOString(),
         };
 
@@ -124,6 +138,7 @@ export const createRouter = (ctx: AppContext) => {
           description: description || null,
           visibility: record.visibility,
           purpose: record.purpose,
+          isDefault: record.isDefault || false,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create collection');
