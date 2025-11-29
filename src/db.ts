@@ -37,6 +37,14 @@ export type Feedback = {
   updatedAt: Date;
 };
 
+export type FeedEvent = {
+  id: number;
+  eventName: string;
+  mediaLink: string | null;
+  userDid: string;
+  createdAt: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -44,6 +52,7 @@ export type DatabaseSchema = {
   users: User;
   reviews: PublicReview;
   feedback: Feedback;
+  feed_events: FeedEvent;
 };
 
 // Migrations
@@ -283,6 +292,37 @@ migrations['005'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.dropTable('feedback').execute();
+  },
+};
+
+migrations['006'] = {
+  async up(db: Kysely<unknown>) {
+    // Create feed_events table
+    await db.schema
+      .createTable('feed_events')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('eventName', 'varchar', (col) => col.notNull())
+      .addColumn('mediaLink', 'varchar')
+      .addColumn('userDid', 'varchar', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull())
+      .execute();
+
+    // Create index for chronological queries (most recent first)
+    await db.schema
+      .createIndex('feed_events_created_at_idx')
+      .on('feed_events')
+      .column('createdAt')
+      .execute();
+
+    // Create index for user-specific queries
+    await db.schema
+      .createIndex('feed_events_user_did_idx')
+      .on('feed_events')
+      .column('userDid')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('feed_events').execute();
   },
 };
 

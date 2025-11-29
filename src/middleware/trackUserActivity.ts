@@ -55,12 +55,16 @@ export function createUserActivityTracker(ctx: AppContext) {
             )
             .execute();
 
-          // Create default "Inbox" list for new user
+          // Create default "Inbox" list for new user and get user profile
           try {
             const oauthSession = await ctx.oauthClient.restore(session.did);
             if (oauthSession) {
               const { Agent } = await import('@atproto/api');
               const agent = new Agent(oauthSession);
+
+              // Get user profile to get handle
+              const profile = await agent.getProfile({ actor: session.did });
+              const userHandle = profile.data.handle;
 
               const defaultListRecord = {
                 $type: 'app.collectivesocial.list',
@@ -83,11 +87,27 @@ export function createUserActivityTracker(ctx: AppContext) {
                 { did: session.did },
                 'Created default Inbox list for new user'
               );
+
+              // Create feed event for new user joining
+              await ctx.db
+                .insertInto('feed_events')
+                .values({
+                  eventName: `${userHandle} joined Collective!`,
+                  mediaLink: null,
+                  userDid: session.did,
+                  createdAt: now,
+                } as any)
+                .execute();
+
+              ctx.logger.info(
+                { did: session.did, handle: userHandle },
+                'Created feed event for new user'
+              );
             }
           } catch (err) {
             ctx.logger.error(
               { err, did: session.did },
-              'Failed to create default Inbox list'
+              'Failed to create default Inbox list or feed event'
             );
           }
 
