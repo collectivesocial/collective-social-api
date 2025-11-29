@@ -4,6 +4,7 @@ import { AuthSession, AuthState } from './models/auth';
 import { Review, Comment, React } from './models/content';
 import { Group, GroupItem } from './models/group';
 import { List, ListItem } from './models/list';
+import { MediaItem } from './models/media';
 import {
   Kysely,
   Migration,
@@ -15,6 +16,7 @@ import {
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
+  media_items: MediaItem;
 };
 
 // Migrations
@@ -113,6 +115,43 @@ migrations['001'] = {
     await db.schema.dropTable('review').execute();
     await db.schema.dropTable('auth_state').execute();
     await db.schema.dropTable('auth_session').execute();
+  },
+};
+
+migrations['002'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('media_items')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('mediaType', 'varchar', (col) => col.notNull())
+      .addColumn('title', 'varchar', (col) => col.notNull())
+      .addColumn('creator', 'varchar')
+      .addColumn('isbn', 'varchar')
+      .addColumn('externalId', 'varchar')
+      .addColumn('coverImage', 'text')
+      .addColumn('description', 'text')
+      .addColumn('publishedYear', 'integer')
+      .addColumn('totalReviews', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('averageRating', 'decimal(3, 2)')
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull())
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull())
+      .execute();
+
+    // Create indexes for common queries
+    await db.schema
+      .createIndex('media_items_isbn_idx')
+      .on('media_items')
+      .column('isbn')
+      .execute();
+
+    await db.schema
+      .createIndex('media_items_type_idx')
+      .on('media_items')
+      .columns(['mediaType'])
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('media_items').execute();
   },
 };
 

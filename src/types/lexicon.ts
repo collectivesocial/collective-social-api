@@ -24,6 +24,7 @@ export namespace AppCollectiveSocialListitem {
     list: string; // AT-URI of the list
     title: string;
     creator?: string;
+    mediaItemId?: number; // Reference to media_items table
     mediaType?:
       | 'book'
       | 'movie'

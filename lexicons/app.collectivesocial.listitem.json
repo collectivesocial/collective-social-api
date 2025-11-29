@@ -27,6 +27,10 @@
             "maxGraphemes": 200,
             "maxLength": 2000
           },
+          "mediaItemId": {
+            "type": "integer",
+            "description": "Optional reference to media_items table for aggregated data."
+          },
           "mediaType": {
             "type": "string",
             "description": "Type of media: book, movie, tv, podcast, article, game, music, etc.",

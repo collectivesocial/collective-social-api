@@ -153,20 +153,51 @@ export const createRouter = (ctx: AppContext) => {
         });
 
         // Filter items that belong to this list
-        const items = response.data.records
-          .filter((record: any) => record.value.list === listUri)
-          .map((record: any) => ({
-            uri: record.uri,
-            cid: record.cid,
-            title: record.value.title,
-            creator: record.value.creator || null,
-            mediaType: record.value.mediaType || null,
-            status: record.value.status || null,
-            rating:
-              record.value.rating !== undefined ? record.value.rating : null,
-            review: record.value.review || null,
-            createdAt: record.value.createdAt,
-          }));
+        const items = await Promise.all(
+          response.data.records
+            .filter((record: any) => record.value.list === listUri)
+            .map(async (record: any) => {
+              const item: any = {
+                uri: record.uri,
+                cid: record.cid,
+                title: record.value.title,
+                creator: record.value.creator || null,
+                mediaType: record.value.mediaType || null,
+                mediaItemId: record.value.mediaItemId || null,
+                status: record.value.status || null,
+                rating:
+                  record.value.rating !== undefined
+                    ? record.value.rating
+                    : null,
+                review: record.value.review || null,
+                createdAt: record.value.createdAt,
+              };
+
+              // If there's a mediaItemId, enrich with media_items data
+              if (record.value.mediaItemId) {
+                const mediaItem = await ctx.db
+                  .selectFrom('media_items')
+                  .selectAll()
+                  .where('id', '=', record.value.mediaItemId)
+                  .executeTakeFirst();
+
+                if (mediaItem) {
+                  item.mediaItem = {
+                    id: mediaItem.id,
+                    isbn: mediaItem.isbn,
+                    externalId: mediaItem.externalId,
+                    coverImage: mediaItem.coverImage,
+                    description: mediaItem.description,
+                    publishedYear: mediaItem.publishedYear,
+                    totalReviews: mediaItem.totalReviews,
+                    averageRating: mediaItem.averageRating,
+                  };
+                }
+              }
+
+              return item;
+            })
+        );
 
         res.json({ items });
       } catch (err) {
@@ -187,7 +218,8 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { title, rating, status, review, mediaType, creator } = req.body;
+      const { title, rating, status, review, mediaType, creator, mediaItemId } =
+        req.body;
 
       if (!title) {
         return res.status(400).json({ error: 'Title is required' });
@@ -202,12 +234,14 @@ export const createRouter = (ctx: AppContext) => {
           list: listUri,
           title,
           creator: creator || undefined,
+          mediaItemId: mediaItemId || undefined,
           mediaType: mediaType || undefined,
           status: status || undefined,
           rating: rating !== undefined ? Number(rating) : undefined,
           review: review || undefined,
           createdAt: new Date().toISOString(),
         };
+        console.log({ listItemRecord });
 
         // Create the record in the user's repo
         const response = await agent.api.com.atproto.repo.createRecord({
@@ -215,6 +249,39 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.listitem',
           record: listItemRecord as any,
         });
+
+        console.log({ response });
+
+        // If we have a mediaItemId and a rating, update the aggregated stats
+        if (mediaItemId && rating !== undefined) {
+          // Get current stats
+          const currentItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['totalReviews', 'averageRating'])
+            .where('id', '=', mediaItemId)
+            .executeTakeFirst();
+
+          if (currentItem) {
+            const newTotalReviews = currentItem.totalReviews + 1;
+            const currentAvg = currentItem.averageRating
+              ? parseFloat(currentItem.averageRating.toString())
+              : 0;
+            const newAverage =
+              (currentAvg * currentItem.totalReviews + Number(rating)) /
+              newTotalReviews;
+
+            // Update media item with new stats
+            await ctx.db
+              .updateTable('media_items')
+              .set({
+                totalReviews: newTotalReviews,
+                averageRating: parseFloat(newAverage.toFixed(2)),
+                updatedAt: new Date(),
+              })
+              .where('id', '=', mediaItemId)
+              .execute();
+          }
+        }
 
         res.json({
           uri: response.data.uri,
@@ -224,10 +291,125 @@ export const createRouter = (ctx: AppContext) => {
           status,
           mediaType,
           creator,
+          mediaItemId,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to add item to collection');
+        console.log({ err });
         res.status(500).json({ error: 'Failed to add item to collection' });
+      }
+    })
+  );
+
+  // DELETE /collections/:listUri/items/:itemUri - Delete an item from a collection
+  router.delete(
+    '/:listUri/items/:itemUri',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        const listUri = decodeURIComponent(req.params.listUri);
+        const itemUri = decodeURIComponent(req.params.itemUri);
+
+        // Extract DID from listUri (format: at://did:plc:xxx/app.collectivesocial.list/xxx)
+        const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
+        if (!listDidMatch) {
+          return res.status(400).json({ error: 'Invalid list URI' });
+        }
+        const listOwnerDid = listDidMatch[1];
+
+        // Check if the authenticated user owns this list
+        if (agent.did !== listOwnerDid) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to delete items from this list' });
+        }
+
+        // Get the item first to retrieve its data before deletion (for rating adjustment)
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.listitem',
+        });
+
+        const itemRecord = itemsResponse.data.records.find(
+          (record: any) => record.uri === itemUri
+        );
+
+        if (!itemRecord) {
+          return res.status(404).json({ error: 'Item not found' });
+        }
+
+        // Extract rkey from itemUri (format: at://did:plc:xxx/app.collectivesocial.listitem/rkey)
+        const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
+        if (!rkeyMatch) {
+          return res.status(400).json({ error: 'Invalid item URI' });
+        }
+        const rkey = rkeyMatch[1];
+
+        // Delete the record from the user's repo
+        await agent.api.com.atproto.repo.deleteRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.listitem',
+          rkey: rkey,
+        });
+
+        // If the item had a mediaItemId and rating, update the aggregated stats
+        const itemData = itemRecord.value as any;
+        if (itemData.mediaItemId && itemData.rating !== undefined) {
+          const currentItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['totalReviews', 'averageRating'])
+            .where('id', '=', itemData.mediaItemId)
+            .executeTakeFirst();
+
+          if (currentItem && currentItem.totalReviews > 0) {
+            const newTotalReviews = currentItem.totalReviews - 1;
+
+            if (newTotalReviews === 0) {
+              // Reset to 0 if no more reviews
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  totalReviews: 0,
+                  averageRating: 0,
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', itemData.mediaItemId)
+                .execute();
+            } else {
+              // Recalculate average without this rating
+              const currentAvg = currentItem.averageRating
+                ? parseFloat(currentItem.averageRating.toString())
+                : 0;
+              const newAverage =
+                (currentAvg * currentItem.totalReviews -
+                  Number(itemData.rating)) /
+                newTotalReviews;
+
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  totalReviews: newTotalReviews,
+                  averageRating: parseFloat(newAverage.toFixed(2)),
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', itemData.mediaItemId)
+                .execute();
+            }
+          }
+        }
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete item from collection');
+        res
+          .status(500)
+          .json({ error: 'Failed to delete item from collection' });
       }
     })
   );

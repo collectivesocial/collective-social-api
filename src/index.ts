@@ -3,6 +3,7 @@ import cors from 'cors';
 import { createRouter as createUserRouter } from './routes/user';
 import { createRouter as createAuthRouter } from './routes/auth';
 import { createRouter as createCollectionsRouter } from './routes/collections';
+import { createRouter as createMediaRouter } from './routes/media';
 import { config } from './config';
 import { createAppContext } from './context';
 
@@ -29,6 +30,9 @@ createAppContext().then((ctx) => {
 
   // Mount collections routes
   app.use('/collections', createCollectionsRouter(ctx));
+
+  // Mount media routes
+  app.use('/media', createMediaRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {
