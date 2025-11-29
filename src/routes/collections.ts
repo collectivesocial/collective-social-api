@@ -69,6 +69,7 @@ export const createRouter = (ctx: AppContext) => {
             cid: record.cid,
             name: record.value.name,
             description: record.value.description || null,
+            visibility: record.value.visibility || 'public',
             purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
@@ -92,7 +93,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { name, description, purpose } = req.body;
+      const { name, description, purpose, visibility } = req.body;
 
       if (!name) {
         return res.status(400).json({ error: 'Name is required' });
@@ -103,6 +104,7 @@ export const createRouter = (ctx: AppContext) => {
           $type: 'app.collectivesocial.list',
           name,
           description: description || undefined,
+          visibility: visibility || 'public',
           purpose: purpose || 'app.collectivesocial.defs#curatelist',
           createdAt: new Date().toISOString(),
         };
@@ -119,6 +121,7 @@ export const createRouter = (ctx: AppContext) => {
           cid: response.data.cid,
           name,
           description: description || null,
+          visibility: record.visibility,
           purpose: record.purpose,
         });
       } catch (err) {
@@ -225,6 +228,55 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to add item to collection');
         res.status(500).json({ error: 'Failed to add item to collection' });
+      }
+    })
+  );
+
+  // GET /collections/public/:did - Get public collections for a user (for profile display)
+  router.get(
+    '/public/:did',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'public, max-age=60');
+
+      const { did } = req.params;
+
+      // Try to get authenticated agent, otherwise create unauthenticated one
+      let queryAgent = await getSessionAgent(req, res, ctx);
+      if (!queryAgent) {
+        // Create an unauthenticated agent for public queries
+        queryAgent = new Agent({ service: 'https://bsky.social' });
+      }
+
+      try {
+        // List records of type app.collectivesocial.list from the specified user's repo
+        const response = await queryAgent.api.com.atproto.repo.listRecords({
+          repo: did,
+          collection: 'app.collectivesocial.list',
+        });
+
+        // Filter to only public collections
+        const publicCollections = response.data.records
+          .filter((record: any) => {
+            const visibility = record.value.visibility || 'public';
+            return visibility === 'public';
+          })
+          .map((record: any) => ({
+            uri: record.uri,
+            cid: record.cid,
+            name: record.value.name,
+            description: record.value.description || null,
+            visibility: record.value.visibility || 'public',
+            purpose: record.value.purpose,
+            avatar: record.value.avatar || null,
+            createdAt: record.value.createdAt,
+          }));
+
+        res.json({
+          collections: publicCollections,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch public collections');
+        res.status(500).json({ error: 'Failed to fetch public collections' });
       }
     })
   );

@@ -8,6 +8,7 @@ export namespace AppCollectiveSocialList {
     $type?: 'app.collectivesocial.list';
     name: string;
     description?: string;
+    visibility?: 'public' | 'private';
     purpose: string;
     avatar?: {
       cid: string;

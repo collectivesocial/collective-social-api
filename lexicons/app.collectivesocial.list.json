@@ -22,6 +22,12 @@
             "maxGraphemes": 300,
             "maxLength": 3000
           },
+          "visibility": {
+            "type": "string",
+            "description": "Visibility of the collection: public or private. Defaults to public.",
+            "knownValues": ["public", "private"],
+            "default": "public"
+          },
           "purpose": {
             "type": "string",
             "description": "The purpose of the list, e.g. 'app.collectivesocial.defs#curatelist'.",
