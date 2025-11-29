@@ -17,4 +17,7 @@ export const config = {
     process.env.FIREHOSE_URL ||
     'wss://bsky.social/xrpc/com.atproto.sync.firehose',
   cookieSecret: process.env.COOKIE_SECRET || 'default',
+  openLibraryUserAgent:
+    process.env.OPENLIBRARY_USER_AGENT ||
+    'CollectiveSocial.app/1.0 (brittany@balancedengineer.com)',
 } as const;

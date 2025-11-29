@@ -1,7 +1,16 @@
+import { config } from '../config';
+
 /**
  * OpenLibrary API integration for book search
  * Docs: https://openlibrary.org/developers/api
+ *
+ * All requests include a User-Agent header to identify our application.
+ * Configurable via OPENLIBRARY_USER_AGENT environment variable.
  */
+
+const getOpenLibraryHeaders = () => ({
+  'User-Agent': config.openLibraryUserAgent,
+});
 
 export interface OpenLibrarySearchResult {
   key: string;
@@ -40,7 +49,12 @@ export async function searchBooks(
     q: query,
     limit: limit.toString(),
   });
-  const response = await fetch(`https://openlibrary.org/search.json?${params}`);
+  const response = await fetch(
+    `https://openlibrary.org/search.json?${params}`,
+    {
+      headers: getOpenLibraryHeaders(),
+    }
+  );
 
   if (!response.ok) {
     throw new Error('Failed to search OpenLibrary');
@@ -56,7 +70,9 @@ export async function searchBooks(
 export async function getBookByISBN(
   isbn: string
 ): Promise<OpenLibraryBook | null> {
-  const response = await fetch(`https://openlibrary.org/isbn/${isbn}.json`);
+  const response = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, {
+    headers: getOpenLibraryHeaders(),
+  });
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -74,7 +90,9 @@ export async function getBookByISBN(
 export async function getBookByKey(
   key: string
 ): Promise<OpenLibraryBook | null> {
-  const response = await fetch(`https://openlibrary.org${key}.json`);
+  const response = await fetch(`https://openlibrary.org${key}.json`, {
+    headers: getOpenLibraryHeaders(),
+  });
 
   if (!response.ok) {
     if (response.status === 404) {
