@@ -398,8 +398,29 @@ export const createRouter = (ctx: AppContext) => {
       try {
         const listUri = decodeURIComponent(req.params.listUri);
 
+        // Check if item already exists in the list
+        const existingItemsResponse =
+          await agent.api.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.listitem',
+          });
+
+        const existingItem = existingItemsResponse.data.records.find(
+          (record: any) => {
+            const itemData = record.value as any;
+            if (itemData.list !== listUri) return false;
+
+            // Match by mediaItemId if provided, otherwise by title
+            if (mediaItemId) {
+              return itemData.mediaItemId === mediaItemId;
+            } else {
+              return itemData.title === title;
+            }
+          }
+        );
+
         // Build recommendations array
-        const recommendations = [];
+        const newRecommendations = [];
         if (recommendedBy) {
           // recommendedBy can be a single DID/handle or array of DIDs/handles
           const recommenders = Array.isArray(recommendedBy)
@@ -426,14 +447,176 @@ export const createRouter = (ctx: AppContext) => {
               }
             }
 
-            recommendations.push({
+            newRecommendations.push({
               did: did,
               suggestedAt: suggestedAt,
             });
           }
         }
 
-        // Create a listitem record with the review data
+        // If item exists, update it by merging information
+        if (existingItem) {
+          const existingData = existingItem.value as any;
+          const existingRecommendations = existingData.recommendations || [];
+
+          // Merge recommendations, avoiding duplicates by DID
+          const mergedRecommendations = [...existingRecommendations];
+          for (const newRec of newRecommendations) {
+            const alreadyExists = mergedRecommendations.some(
+              (existing: any) => existing.did === newRec.did
+            );
+            if (!alreadyExists) {
+              mergedRecommendations.push(newRec);
+            }
+          }
+
+          // Extract rkey from existing item URI
+          const rkeyMatch = existingItem.uri.match(/\/([^\/]+)$/);
+          if (!rkeyMatch) {
+            return res.status(400).json({ error: 'Invalid existing item URI' });
+          }
+          const rkey = rkeyMatch[1];
+
+          // Update the record, keeping existing data but adding new information
+          const updatedRecord: AppCollectiveSocialListitem.Record = {
+            ...existingData,
+            // Update fields if new values provided, otherwise keep existing
+            // Don't overwrite existing rating if it's > 0 and new rating is 0
+            rating:
+              rating !== undefined &&
+              (Number(rating) > 0 ||
+                !existingData.rating ||
+                existingData.rating === 0)
+                ? Number(rating)
+                : existingData.rating,
+            status: status || existingData.status,
+            review: review !== undefined ? review : existingData.review,
+            notes: notes !== undefined ? notes : existingData.notes,
+            creator: creator || existingData.creator,
+            recommendations:
+              mergedRecommendations.length > 0
+                ? mergedRecommendations
+                : undefined,
+          };
+
+          await agent.api.com.atproto.repo.putRecord({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.listitem',
+            rkey: rkey,
+            record: updatedRecord as any,
+          });
+
+          // Handle review database update
+          if (
+            review !== undefined &&
+            updatedRecord.rating !== undefined &&
+            mediaItemId &&
+            mediaType
+          ) {
+            if (review && review.trim()) {
+              const now = new Date();
+              await ctx.db
+                .insertInto('reviews')
+                .values({
+                  authorDid: agent.did!,
+                  mediaItemId: mediaItemId,
+                  mediaType: mediaType,
+                  rating: Number(updatedRecord.rating),
+                  review: review.trim(),
+                  listItemUri: existingItem.uri,
+                  createdAt: now,
+                  updatedAt: now,
+                } as any)
+                .onConflict((oc) =>
+                  oc
+                    .columns(['authorDid', 'mediaItemId', 'mediaType'])
+                    .doUpdateSet({
+                      rating: Number(updatedRecord.rating),
+                      review: review.trim(),
+                      updatedAt: now,
+                    })
+                )
+                .execute();
+            } else if (review === '' || review === null) {
+              await ctx.db
+                .deleteFrom('reviews')
+                .where('authorDid', '=', agent.did!)
+                .where('mediaItemId', '=', mediaItemId)
+                .where('mediaType', '=', mediaType)
+                .execute();
+            }
+          }
+
+          // Update aggregated stats if rating changed
+          const oldRating = existingData.rating;
+          if (
+            mediaItemId &&
+            rating !== undefined &&
+            oldRating !== Number(rating)
+          ) {
+            const currentItem = await ctx.db
+              .selectFrom('media_items')
+              .select(['totalReviews', 'averageRating'])
+              .where('id', '=', mediaItemId)
+              .executeTakeFirst();
+
+            if (currentItem && currentItem.totalReviews > 0) {
+              const currentAvg = currentItem.averageRating
+                ? parseFloat(currentItem.averageRating.toString())
+                : 0;
+
+              let newAverage: number;
+              if (oldRating === undefined || oldRating === null) {
+                // Adding a new rating
+                const newTotalReviews = currentItem.totalReviews + 1;
+                newAverage =
+                  (currentAvg * currentItem.totalReviews + Number(rating)) /
+                  newTotalReviews;
+
+                await ctx.db
+                  .updateTable('media_items')
+                  .set({
+                    totalReviews: newTotalReviews,
+                    averageRating: parseFloat(newAverage.toFixed(2)),
+                    updatedAt: new Date(),
+                  })
+                  .where('id', '=', mediaItemId)
+                  .execute();
+              } else {
+                // Updating existing rating
+                newAverage =
+                  (currentAvg * currentItem.totalReviews -
+                    Number(oldRating) +
+                    Number(rating)) /
+                  currentItem.totalReviews;
+
+                await ctx.db
+                  .updateTable('media_items')
+                  .set({
+                    averageRating: parseFloat(newAverage.toFixed(2)),
+                    updatedAt: new Date(),
+                  })
+                  .where('id', '=', mediaItemId)
+                  .execute();
+              }
+            }
+          }
+
+          return res.json({
+            uri: existingItem.uri,
+            cid: existingItem.cid,
+            updated: true,
+            title: updatedRecord.title,
+            rating: updatedRecord.rating,
+            status: updatedRecord.status,
+            mediaType: updatedRecord.mediaType,
+            creator: updatedRecord.creator,
+            mediaItemId,
+            recommendations: mergedRecommendations,
+          });
+        }
+
+        // Item doesn't exist, create new one
         const listItemRecord: AppCollectiveSocialListitem.Record = {
           $type: 'app.collectivesocial.listitem',
           list: listUri,
@@ -446,7 +629,7 @@ export const createRouter = (ctx: AppContext) => {
           review: review || undefined,
           notes: notes || undefined,
           recommendations:
-            recommendations.length > 0 ? recommendations : undefined,
+            newRecommendations.length > 0 ? newRecommendations : undefined,
           createdAt: new Date().toISOString(),
         };
 
@@ -527,6 +710,7 @@ export const createRouter = (ctx: AppContext) => {
         res.json({
           uri: response.data.uri,
           cid: response.data.cid,
+          created: true,
           title,
           rating,
           status,
