@@ -343,6 +343,142 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // PUT /collections/:listUri/items/:itemUri - Update an item in a collection
+  router.put(
+    '/:listUri/items/:itemUri',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { rating, review } = req.body;
+
+      try {
+        const listUri = decodeURIComponent(req.params.listUri);
+        const itemUri = decodeURIComponent(req.params.itemUri);
+
+        // Extract DID from itemUri to verify ownership
+        const itemDidMatch = itemUri.match(/^at:\/\/([^\/]+)/);
+        if (!itemDidMatch) {
+          return res.status(400).json({ error: 'Invalid item URI' });
+        }
+        const itemOwnerDid = itemDidMatch[1];
+
+        // Check if the authenticated user owns this item
+        if (agent.did !== itemOwnerDid) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to update this item' });
+        }
+
+        // Get the current item record
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.listitem',
+        });
+
+        const itemRecord = itemsResponse.data.records.find(
+          (record: any) => record.uri === itemUri
+        );
+
+        if (!itemRecord) {
+          return res.status(404).json({ error: 'Item not found' });
+        }
+
+        const currentData = itemRecord.value as any;
+        const oldRating = currentData.rating;
+        const mediaItemId = currentData.mediaItemId;
+
+        // Extract rkey from itemUri
+        const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
+        if (!rkeyMatch) {
+          return res.status(400).json({ error: 'Invalid item URI' });
+        }
+        const rkey = rkeyMatch[1];
+
+        // Update the record with new rating and/or review
+        const updatedRecord: AppCollectiveSocialListitem.Record = {
+          ...currentData,
+          rating: rating !== undefined ? Number(rating) : currentData.rating,
+          review: review !== undefined ? review : currentData.review,
+        };
+
+        await agent.api.com.atproto.repo.putRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.listitem',
+          rkey: rkey,
+          record: updatedRecord as any,
+        });
+
+        // Update aggregated stats if rating changed and we have a mediaItemId
+        if (
+          mediaItemId &&
+          rating !== undefined &&
+          oldRating !== Number(rating)
+        ) {
+          const currentItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['totalReviews', 'averageRating'])
+            .where('id', '=', mediaItemId)
+            .executeTakeFirst();
+
+          if (currentItem && currentItem.totalReviews > 0) {
+            const currentAvg = currentItem.averageRating
+              ? parseFloat(currentItem.averageRating.toString())
+              : 0;
+
+            let newAverage: number;
+            if (oldRating === undefined || oldRating === null) {
+              // Adding a new rating
+              const newTotalReviews = currentItem.totalReviews + 1;
+              newAverage =
+                (currentAvg * currentItem.totalReviews + Number(rating)) /
+                newTotalReviews;
+
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  totalReviews: newTotalReviews,
+                  averageRating: parseFloat(newAverage.toFixed(2)),
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', mediaItemId)
+                .execute();
+            } else {
+              // Updating existing rating
+              newAverage =
+                (currentAvg * currentItem.totalReviews -
+                  Number(oldRating) +
+                  Number(rating)) /
+                currentItem.totalReviews;
+
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  averageRating: parseFloat(newAverage.toFixed(2)),
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', mediaItemId)
+                .execute();
+            }
+          }
+        }
+
+        res.json({
+          success: true,
+          rating: updatedRecord.rating,
+          review: updatedRecord.review,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to update item');
+        res.status(500).json({ error: 'Failed to update item' });
+      }
+    })
+  );
+
   // DELETE /collections/:listUri/items/:itemUri - Delete an item from a collection
   router.delete(
     '/:listUri/items/:itemUri',
