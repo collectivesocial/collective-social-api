@@ -217,7 +217,6 @@ export const createRouter = (ctx: AppContext) => {
       if (!agent) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
-      console.log({ req });
 
       const { title, rating, status, review, mediaType, creator, mediaItemId } =
         req.body;
@@ -242,7 +241,6 @@ export const createRouter = (ctx: AppContext) => {
           review: review || undefined,
           createdAt: new Date().toISOString(),
         };
-        console.log({ listItemRecord });
 
         // Create the record in the user's repo
         const response = await agent.api.com.atproto.repo.createRecord({
@@ -250,8 +248,6 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.listitem',
           record: listItemRecord as any,
         });
-
-        console.log({ response });
 
         // If we have a mediaItemId and a rating, update the aggregated stats
         if (mediaItemId && rating !== undefined) {
@@ -296,7 +292,6 @@ export const createRouter = (ctx: AppContext) => {
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to add item to collection');
-        console.log({ err });
         res.status(500).json({ error: 'Failed to add item to collection' });
       }
     })

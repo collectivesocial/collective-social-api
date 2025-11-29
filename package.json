@@ -11,7 +11,8 @@
     "docker:down": "docker-compose down",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
-    "lexgen": "lex gen-server ./src/lexicon ./lexicons/*"
+    "lexgen": "lex gen-server ./src/lexicon ./lexicons/*",
+    "make-admin": "ts-node scripts/makeAdmin.ts"
   },
   "author": "",
   "license": "ISC",

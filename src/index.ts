@@ -4,8 +4,10 @@ import { createRouter as createUserRouter } from './routes/user';
 import { createRouter as createAuthRouter } from './routes/auth';
 import { createRouter as createCollectionsRouter } from './routes/collections';
 import { createRouter as createMediaRouter } from './routes/media';
+import { createRouter as createAdminRouter } from './routes/admin';
 import { config } from './config';
 import { createAppContext } from './context';
+import { createUserActivityTracker } from './middleware/trackUserActivity';
 
 const app = express();
 
@@ -22,6 +24,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // Initialize app context and routes
 createAppContext().then((ctx) => {
+  // Add user activity tracking middleware
+  app.use(createUserActivityTracker(ctx));
+
   // Mount auth routes
   app.use(createAuthRouter(ctx));
 
@@ -33,6 +38,9 @@ createAppContext().then((ctx) => {
 
   // Mount media routes
   app.use('/media', createMediaRouter(ctx));
+
+  // Mount admin routes
+  app.use('/admin', createAdminRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {

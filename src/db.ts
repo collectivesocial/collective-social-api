@@ -5,6 +5,7 @@ import { Review, Comment, React } from './models/content';
 import { Group, GroupItem } from './models/group';
 import { List, ListItem } from './models/list';
 import { MediaItem } from './models/media';
+import { User } from './models/user';
 import {
   Kysely,
   Migration,
@@ -17,6 +18,7 @@ export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
   media_items: MediaItem;
+  users: User;
 };
 
 // Migrations
@@ -152,6 +154,34 @@ migrations['002'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.dropTable('media_items').execute();
+  },
+};
+
+migrations['003'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('users')
+      .addColumn('did', 'varchar', (col) => col.primaryKey())
+      .addColumn('firstLoginAt', 'timestamptz', (col) => col.notNull())
+      .addColumn('lastActivityAt', 'timestamptz', (col) => col.notNull())
+      .addColumn('isAdmin', 'boolean', (col) => col.notNull().defaultTo(false))
+      .addColumn('createdAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo('now()')
+      )
+      .addColumn('updatedAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo('now()')
+      )
+      .execute();
+
+    // Create index for admin queries
+    await db.schema
+      .createIndex('users_is_admin_idx')
+      .on('users')
+      .column('isAdmin')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('users').execute();
   },
 };
 
