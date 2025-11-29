@@ -63,6 +63,26 @@
             "maxGraphemes": 3000,
             "maxLength": 30000
           },
+          "recommendations": {
+            "type": "array",
+            "description": "List of users who recommended this item and when they suggested it.",
+            "items": {
+              "type": "object",
+              "required": ["did", "suggestedAt"],
+              "properties": {
+                "did": {
+                  "type": "string",
+                  "format": "did",
+                  "description": "DID of the user who recommended this item."
+                },
+                "suggestedAt": {
+                  "type": "string",
+                  "format": "datetime",
+                  "description": "Timestamp when this recommendation was made."
+                }
+              }
+            }
+          },
           "createdAt": {
             "type": "string",
             "format": "datetime",

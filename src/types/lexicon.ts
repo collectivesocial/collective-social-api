@@ -19,6 +19,11 @@ export namespace AppCollectiveSocialList {
 }
 
 export namespace AppCollectiveSocialListitem {
+  export interface Recommendation {
+    did: string;
+    suggestedAt: string;
+  }
+
   export interface Record {
     $type?: 'app.collectivesocial.listitem';
     list: string; // AT-URI of the list
@@ -36,6 +41,7 @@ export namespace AppCollectiveSocialListitem {
     status?: 'want' | 'in-progress' | 'completed';
     rating?: number; // 0-5, supports 0.5 increments
     review?: string;
+    recommendations?: Recommendation[];
     createdAt: string;
   }
 }

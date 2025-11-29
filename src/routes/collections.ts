@@ -170,6 +170,7 @@ export const createRouter = (ctx: AppContext) => {
                     ? record.value.rating
                     : null,
                 review: record.value.review || null,
+                recommendations: record.value.recommendations || [],
                 createdAt: record.value.createdAt,
               };
 
@@ -218,8 +219,16 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { title, rating, status, review, mediaType, creator, mediaItemId } =
-        req.body;
+      const {
+        title,
+        rating,
+        status,
+        review,
+        mediaType,
+        creator,
+        mediaItemId,
+        recommendedBy,
+      } = req.body;
 
       if (!title) {
         return res.status(400).json({ error: 'Title is required' });
@@ -227,6 +236,41 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const listUri = decodeURIComponent(req.params.listUri);
+
+        // Build recommendations array
+        const recommendations = [];
+        if (recommendedBy) {
+          // recommendedBy can be a single DID/handle or array of DIDs/handles
+          const recommenders = Array.isArray(recommendedBy)
+            ? recommendedBy
+            : [recommendedBy];
+          const suggestedAt = new Date().toISOString();
+
+          for (const recommender of recommenders) {
+            let did = recommender;
+
+            // If it's a handle (not starting with did:), resolve it to a DID
+            if (!recommender.startsWith('did:')) {
+              try {
+                const resolved = await agent.resolveHandle({
+                  handle: recommender,
+                });
+                did = resolved.data.did;
+              } catch (err) {
+                ctx.logger.warn(
+                  { handle: recommender },
+                  'Failed to resolve handle, using as-is'
+                );
+                // Keep the original value if resolution fails
+              }
+            }
+
+            recommendations.push({
+              did: did,
+              suggestedAt: suggestedAt,
+            });
+          }
+        }
 
         // Create a listitem record with the review data
         const listItemRecord: AppCollectiveSocialListitem.Record = {
@@ -239,6 +283,8 @@ export const createRouter = (ctx: AppContext) => {
           status: status || undefined,
           rating: rating !== undefined ? Number(rating) : undefined,
           review: review || undefined,
+          recommendations:
+            recommendations.length > 0 ? recommendations : undefined,
           createdAt: new Date().toISOString(),
         };
 
