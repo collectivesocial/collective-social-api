@@ -168,6 +168,97 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // GET /admin/share-links - Get share links list with pagination and sorting
+  router.get(
+    '/share-links',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      if (!(await requireAdmin(req, res, ctx))) {
+        return;
+      }
+
+      try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 20;
+        const sortBy = (req.query.sortBy as string) || 'timesClicked'; // 'timesClicked' or 'createdAt'
+        const order = (req.query.order as string) || 'desc'; // 'asc' or 'desc'
+        const offset = (page - 1) * limit;
+
+        // Get total count
+        const countResult = await ctx.db
+          .selectFrom('share_links')
+          .select((eb) => eb.fn.countAll().as('count'))
+          .executeTakeFirst();
+
+        const totalLinks = Number(countResult?.count || 0);
+
+        // Build query with sorting
+        let query = ctx.db
+          .selectFrom('share_links')
+          .leftJoin('media_items', 'share_links.mediaItemId', 'media_items.id')
+          .select([
+            'share_links.id',
+            'share_links.shortCode',
+            'share_links.userDid',
+            'share_links.mediaItemId',
+            'share_links.mediaType',
+            'share_links.timesClicked',
+            'share_links.createdAt',
+            'share_links.updatedAt',
+            'media_items.title',
+            'media_items.creator',
+            'media_items.coverImage',
+          ]);
+
+        // Apply sorting
+        if (sortBy === 'timesClicked') {
+          query = query.orderBy(
+            'share_links.timesClicked',
+            order === 'asc' ? 'asc' : 'desc'
+          );
+        } else {
+          query = query.orderBy(
+            'share_links.createdAt',
+            order === 'asc' ? 'asc' : 'desc'
+          );
+        }
+
+        // Apply pagination
+        const shareLinks = await query.limit(limit).offset(offset).execute();
+
+        // Get origin for building full URLs
+        const origin = req.get('origin') || 'http://127.0.0.1:5173';
+
+        res.json({
+          totalLinks,
+          page,
+          limit,
+          totalPages: Math.ceil(totalLinks / limit),
+          sortBy,
+          order,
+          links: shareLinks.map((link) => ({
+            id: link.id,
+            shortCode: link.shortCode,
+            userDid: link.userDid,
+            mediaItemId: link.mediaItemId,
+            mediaType: link.mediaType,
+            timesClicked: link.timesClicked,
+            createdAt: link.createdAt,
+            updatedAt: link.updatedAt,
+            title: link.title,
+            creator: link.creator,
+            coverImage: link.coverImage,
+            url: `${origin}/share/${link.shortCode}`,
+          })),
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch admin share links data');
+        res.status(500).json({ error: 'Failed to fetch share links data' });
+      }
+    })
+  );
+
   // GET /admin/check - Check if current user is admin
   router.get(
     '/check',
