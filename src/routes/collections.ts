@@ -1346,8 +1346,20 @@ export const createRouter = (ctx: AppContext) => {
             createdAt: record.value.createdAt,
           }));
 
+        // Get total public collection count
+        const totalCollectionCount = publicCollections.length;
+
+        // Get review count for this user
+        const reviewCount = await ctx.db
+          .selectFrom('reviews')
+          .select(({ fn }) => [fn.countAll().as('count')])
+          .where('authorDid', '=', did)
+          .executeTakeFirst();
+
         res.json({
           collections: publicCollections,
+          collectionCount: totalCollectionCount,
+          reviewCount: Number(reviewCount?.count || 0),
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch public collections');

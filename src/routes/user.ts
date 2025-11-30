@@ -20,6 +20,22 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const profile = await agent.getProfile({ actor: agent.did! });
+
+        // Get collection count
+        const collectionsResponse =
+          await agent.api.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.list',
+          });
+        const collectionCount = collectionsResponse.data.records.length;
+
+        // Get review count
+        const reviewCount = await ctx.db
+          .selectFrom('reviews')
+          .select(({ fn }) => [fn.countAll().as('count')])
+          .where('authorDid', '=', agent.did!)
+          .executeTakeFirst();
+
         res.json({
           did: profile.data.did,
           handle: profile.data.handle,
@@ -27,6 +43,8 @@ export const createRouter = (ctx: AppContext) => {
           avatar: profile.data.avatar,
           description: profile.data.description,
           followerCount: profile.data.followersCount,
+          collectionCount,
+          reviewCount: Number(reviewCount?.count || 0),
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch profile');
