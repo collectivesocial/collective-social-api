@@ -229,6 +229,7 @@ export const createRouter = (ctx: AppContext) => {
           coverImage: item.coverImage,
           description: item.description,
           publishedYear: item.publishedYear,
+          totalRatings: item.totalRatings,
           totalReviews: item.totalReviews,
           totalSaves: item.totalSaves,
           averageRating: item.averageRating

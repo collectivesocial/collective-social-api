@@ -13,6 +13,7 @@ import {
   Migrator,
   PostgresDialect,
   Generated,
+  sql,
 } from 'kysely';
 
 export type PublicReview = {
@@ -438,6 +439,35 @@ migrations['010'] = {
     await db.schema
       .alterTable('share_links')
       .renameColumn('timesClicked', 'timesShared')
+      .execute();
+  },
+};
+
+migrations['011'] = {
+  async up(db: Kysely<unknown>) {
+    // Add totalRatings column to track all ratings (separate from text reviews)
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('totalRatings', 'integer', (col) => col.notNull().defaultTo(0))
+      .execute();
+
+    // Initialize totalRatings with current totalReviews value
+    // (since all existing reviews have ratings)
+    await sql`UPDATE media_items SET "totalRatings" = "totalReviews"`.execute(
+      db
+    );
+
+    // Create index for sorting by rating count
+    await db.schema
+      .createIndex('media_items_total_ratings_idx')
+      .on('media_items')
+      .column('totalRatings')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('media_items')
+      .dropColumn('totalRatings')
       .execute();
   },
 };

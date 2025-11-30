@@ -136,6 +136,7 @@ export const createRouter = (ctx: AppContext) => {
             'title',
             'creator',
             'isbn',
+            'totalRatings',
             'totalReviews',
             'totalSaves',
             'averageRating',
@@ -153,6 +154,7 @@ export const createRouter = (ctx: AppContext) => {
             title: item.title,
             creator: item.creator,
             isbn: item.isbn,
+            totalRatings: item.totalRatings,
             totalReviews: item.totalReviews,
             totalSaves: item.totalSaves,
             averageRating: item.averageRating

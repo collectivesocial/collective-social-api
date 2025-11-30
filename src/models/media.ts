@@ -10,6 +10,7 @@ export interface MediaItem {
   coverImage?: string;
   description?: string;
   publishedYear?: number;
+  totalRatings: number;
   totalReviews: number;
   totalSaves: number;
   averageRating?: number;
