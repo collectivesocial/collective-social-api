@@ -215,10 +215,16 @@ export const createRouter = (ctx: AppContext) => {
           .where('userDid', '=', userDid)
           .execute();
 
-        // 4. Delete the user record
+        // 4. Delete share links created by this user
+        await ctx.db
+          .deleteFrom('share_links')
+          .where('userDid', '=', userDid)
+          .execute();
+
+        // 5. Delete the user record
         await ctx.db.deleteFrom('users').where('did', '=', userDid).execute();
 
-        // 5. Clear session
+        // 6. Clear session
         res.clearCookie('connect.sid');
 
         ctx.logger.info({ userDid }, 'User account deleted successfully');
