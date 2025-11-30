@@ -11,6 +11,7 @@ export interface MediaItem {
   description?: string;
   publishedYear?: number;
   totalReviews: number;
+  totalSaves: number;
   averageRating?: number;
   createdAt: Date;
   updatedAt: Date;

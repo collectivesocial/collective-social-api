@@ -326,6 +326,29 @@ migrations['006'] = {
   },
 };
 
+migrations['007'] = {
+  async up(db: Kysely<unknown>) {
+    // Add total_saves column to media_items table
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('totalSaves', 'integer', (col) => col.notNull().defaultTo(0))
+      .execute();
+
+    // Create index for sorting by popularity
+    await db.schema
+      .createIndex('media_items_total_saves_idx')
+      .on('media_items')
+      .column('totalSaves')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('media_items')
+      .dropColumn('totalSaves')
+      .execute();
+  },
+};
+
 // APIs
 
 export const createDb = (location: string): Database => {

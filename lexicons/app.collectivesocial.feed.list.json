@@ -1,0 +1,50 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.list",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "required": ["name", "createdAt"],
+      "record": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 640,
+            "maxGraphemes": 64,
+            "description": "Display name for the collection"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 3000,
+            "maxGraphemes": 300,
+            "description": "Optional description of the collection"
+          },
+          "visibility": {
+            "type": "string",
+            "description": "Visibility of the collection: public or private. Defaults to public.",
+            "knownValues": ["public", "private"],
+            "default": "public"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "description": "Whether this is the default inbox list. Only one per user, cannot be deleted.",
+            "default": false
+          },
+          "avatar": {
+            "type": "blob",
+            "description": "Optional avatar image for the collection.",
+            "accept": ["image/png", "image/jpeg"],
+            "maxSize": 1000000
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this collection was created"
+          }
+        }
+      }
+    }
+  }
+}

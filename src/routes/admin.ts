@@ -137,6 +137,7 @@ export const createRouter = (ctx: AppContext) => {
             'creator',
             'isbn',
             'totalReviews',
+            'totalSaves',
             'averageRating',
             'createdAt',
           ])
@@ -153,6 +154,7 @@ export const createRouter = (ctx: AppContext) => {
             creator: item.creator,
             isbn: item.isbn,
             totalReviews: item.totalReviews,
+            totalSaves: item.totalSaves,
             averageRating: item.averageRating
               ? parseFloat(item.averageRating.toString())
               : null,

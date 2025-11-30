@@ -67,7 +67,7 @@ export function createUserActivityTracker(ctx: AppContext) {
               const userHandle = profile.data.handle;
 
               const defaultListRecord = {
-                $type: 'app.collectivesocial.list',
+                $type: 'app.collectivesocial.feed.list',
                 name: 'Inbox',
                 description:
                   'Your default inbox for recommendations and items to review',
@@ -79,7 +79,7 @@ export function createUserActivityTracker(ctx: AppContext) {
 
               await agent.api.com.atproto.repo.createRecord({
                 repo: session.did,
-                collection: 'app.collectivesocial.list',
+                collection: 'app.collectivesocial.feed.list',
                 record: defaultListRecord as any,
               });
 
@@ -135,3 +135,4 @@ export function createUserActivityTracker(ctx: AppContext) {
     next();
   };
 }
+

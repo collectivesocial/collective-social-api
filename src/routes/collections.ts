@@ -3,8 +3,9 @@ import { Agent } from '@atproto/api';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
-  AppCollectiveSocialList,
-  AppCollectiveSocialListitem,
+  AppCollectiveSocialFeedList,
+  AppCollectiveSocialFeedListitem,
+  AppCollectiveSocialFeedReview,
 } from '../types/lexicon';
 import { getSessionAgent } from '../auth/agent';
 
@@ -23,10 +24,10 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        // List records of type app.collectivesocial.list from the user's repo
+        // List records of type app.collectivesocial.feed.list from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
         });
 
         res.json({
@@ -70,7 +71,7 @@ export const createRouter = (ctx: AppContext) => {
         // Check if user already has a default list
         const existingLists = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
         });
 
         const hasDefaultList = existingLists.data.records.some(
@@ -80,8 +81,8 @@ export const createRouter = (ctx: AppContext) => {
         // Mark as default if this is the user's first list or they have no default
         const isDefault = !hasDefaultList;
 
-        const record: AppCollectiveSocialList.Record = {
-          $type: 'app.collectivesocial.list',
+        const record: AppCollectiveSocialFeedList.Record = {
+          $type: 'app.collectivesocial.feed.list',
           name,
           description: description || undefined,
           visibility: visibility || 'public',
@@ -93,7 +94,7 @@ export const createRouter = (ctx: AppContext) => {
         // Create a record in the user's repo using the custom lexicon
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
           record: record as any,
         });
 
@@ -150,7 +151,7 @@ export const createRouter = (ctx: AppContext) => {
         // Get current list record
         const listsResponse = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
         });
 
         const listRecord = listsResponse.data.records.find(
@@ -171,7 +172,7 @@ export const createRouter = (ctx: AppContext) => {
         const rkey = rkeyMatch[1];
 
         // Update the record
-        const updatedRecord: AppCollectiveSocialList.Record = {
+        const updatedRecord: AppCollectiveSocialFeedList.Record = {
           ...currentData,
           name,
           description: description || undefined,
@@ -180,7 +181,7 @@ export const createRouter = (ctx: AppContext) => {
 
         await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
           rkey: rkey,
           record: updatedRecord as any,
         });
@@ -229,7 +230,7 @@ export const createRouter = (ctx: AppContext) => {
         // Get the list record to check if it's the default list
         const listsResponse = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
         });
 
         const listRecord = listsResponse.data.records.find(
@@ -259,7 +260,7 @@ export const createRouter = (ctx: AppContext) => {
         // Delete the record from the user's repo
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
           rkey: rkey,
         });
 
@@ -289,7 +290,7 @@ export const createRouter = (ctx: AppContext) => {
         // List all listitem records from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
         });
 
         // Filter items that belong to this list
@@ -332,6 +333,7 @@ export const createRouter = (ctx: AppContext) => {
                     description: mediaItem.description,
                     publishedYear: mediaItem.publishedYear,
                     totalReviews: mediaItem.totalReviews,
+                    totalSaves: mediaItem.totalSaves,
                     averageRating: mediaItem.averageRating,
                   };
                 }
@@ -384,7 +386,7 @@ export const createRouter = (ctx: AppContext) => {
         const existingItemsResponse =
           await agent.api.com.atproto.repo.listRecords({
             repo: agent.did!,
-            collection: 'app.collectivesocial.listitem',
+            collection: 'app.collectivesocial.feed.listitem',
           });
 
         const existingItem = existingItemsResponse.data.records.find(
@@ -469,20 +471,10 @@ export const createRouter = (ctx: AppContext) => {
           }
 
           // Update the record, keeping existing data but adding new information
-          const updatedRecord: AppCollectiveSocialListitem.Record = {
+          const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
             ...existingData,
             // Update fields if new values provided, otherwise keep existing
-            // Don't overwrite existing rating if it's > 0 and new rating is 0
-            rating:
-              rating !== undefined &&
-              (Number(rating) > 0 ||
-                !existingData.rating ||
-                existingData.rating === 0)
-                ? Number(rating)
-                : existingData.rating,
             status: status || existingData.status,
-            review: review !== undefined ? review : existingData.review,
-            notes: notes !== undefined ? notes : existingData.notes,
             creator: creator || existingData.creator,
             completedAt: completedAtValue,
             recommendations:
@@ -493,7 +485,7 @@ export const createRouter = (ctx: AppContext) => {
 
           await agent.api.com.atproto.repo.putRecord({
             repo: agent.did!,
-            collection: 'app.collectivesocial.listitem',
+            collection: 'app.collectivesocial.feed.listitem',
             rkey: rkey,
             record: updatedRecord as any,
           });
@@ -501,7 +493,7 @@ export const createRouter = (ctx: AppContext) => {
           // Handle review database update
           if (
             review !== undefined &&
-            updatedRecord.rating !== undefined &&
+            rating !== undefined &&
             mediaItemId &&
             mediaType
           ) {
@@ -513,7 +505,7 @@ export const createRouter = (ctx: AppContext) => {
                   authorDid: agent.did!,
                   mediaItemId: mediaItemId,
                   mediaType: mediaType,
-                  rating: Number(updatedRecord.rating),
+                  rating: Number(rating),
                   review: review.trim(),
                   listItemUri: existingItem.uri,
                   createdAt: now,
@@ -523,7 +515,7 @@ export const createRouter = (ctx: AppContext) => {
                   oc
                     .columns(['authorDid', 'mediaItemId', 'mediaType'])
                     .doUpdateSet({
-                      rating: Number(updatedRecord.rating),
+                      rating: Number(rating),
                       review: review.trim(),
                       updatedAt: now,
                     })
@@ -540,7 +532,16 @@ export const createRouter = (ctx: AppContext) => {
           }
 
           // Update aggregated stats if rating changed
-          const oldRating = existingData.rating;
+          // Note: We need to track old rating from the database, not from the listitem record
+          const existingReview = await ctx.db
+            .selectFrom('reviews')
+            .select(['rating'])
+            .where('authorDid', '=', agent.did!)
+            .where('mediaItemId', '=', mediaItemId || '')
+            .where('mediaType', '=', mediaType || '')
+            .executeTakeFirst();
+          const oldRating = existingReview?.rating;
+
           if (
             mediaItemId &&
             rating !== undefined &&
@@ -635,7 +636,6 @@ export const createRouter = (ctx: AppContext) => {
             cid: existingItem.cid,
             updated: true,
             title: updatedRecord.title,
-            rating: updatedRecord.rating,
             status: updatedRecord.status,
             mediaType: updatedRecord.mediaType,
             creator: updatedRecord.creator,
@@ -646,17 +646,14 @@ export const createRouter = (ctx: AppContext) => {
 
         // Item doesn't exist, create new one
         const now = new Date();
-        const listItemRecord: AppCollectiveSocialListitem.Record = {
-          $type: 'app.collectivesocial.listitem',
+        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
+          $type: 'app.collectivesocial.feed.listitem',
           list: listUri,
           title,
           creator: creator || undefined,
           mediaItemId: mediaItemId || undefined,
           mediaType: mediaType || undefined,
           status: status || undefined,
-          rating: rating !== undefined ? Number(rating) : undefined,
-          review: review || undefined,
-          notes: notes || undefined,
           completedAt:
             status === 'completed'
               ? completedAt || now.toISOString()
@@ -669,9 +666,21 @@ export const createRouter = (ctx: AppContext) => {
         // Create the record in the user's repo
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
           record: listItemRecord as any,
         });
+
+        // Increment totalSaves for this media item
+        if (mediaItemId) {
+          await ctx.db
+            .updateTable('media_items')
+            .set((eb) => ({
+              totalSaves: eb('totalSaves', '+', 1),
+              updatedAt: new Date(),
+            }))
+            .where('id', '=', mediaItemId)
+            .execute();
+        }
 
         // If a public review is provided with rating and mediaItemId, save to database
         if (
@@ -776,7 +785,6 @@ export const createRouter = (ctx: AppContext) => {
           cid: response.data.cid,
           created: true,
           title,
-          rating,
           status,
           mediaType,
           creator,
@@ -823,7 +831,7 @@ export const createRouter = (ctx: AppContext) => {
         // Get the current item record
         const itemsResponse = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
         });
 
         const itemRecord = itemsResponse.data.records.find(
@@ -835,8 +843,18 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         const currentData = itemRecord.value as any;
-        const oldRating = currentData.rating;
         const mediaItemId = currentData.mediaItemId;
+        const mediaType = currentData.mediaType;
+
+        // Get old rating from database reviews table
+        const existingReview = await ctx.db
+          .selectFrom('reviews')
+          .select(['rating'])
+          .where('authorDid', '=', agent.did!)
+          .where('mediaItemId', '=', mediaItemId || '')
+          .where('mediaType', '=', mediaType || '')
+          .executeTakeFirst();
+        const oldRating = existingReview?.rating;
 
         // Extract rkey from itemUri
         const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
@@ -845,27 +863,20 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Update the record with new rating, review, and/or notes
-        const updatedRecord: AppCollectiveSocialListitem.Record = {
+        // Update the record (rating, review, notes are now handled separately)
+        const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
           ...currentData,
-          rating: rating !== undefined ? Number(rating) : currentData.rating,
-          review: review !== undefined ? review : currentData.review,
-          notes: notes !== undefined ? notes : currentData.notes,
         };
 
         await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
           rkey: rkey,
           record: updatedRecord as any,
         });
 
         // If public review is provided/updated with rating and mediaItemId, upsert to database
-        if (
-          review !== undefined &&
-          updatedRecord.rating !== undefined &&
-          mediaItemId
-        ) {
+        if (review !== undefined && rating !== undefined && mediaItemId) {
           const mediaType = currentData.mediaType;
 
           if (review && review.trim() && mediaType) {
@@ -878,7 +889,7 @@ export const createRouter = (ctx: AppContext) => {
                 authorDid: agent.did!,
                 mediaItemId: mediaItemId,
                 mediaType: mediaType,
-                rating: Number(updatedRecord.rating),
+                rating: Number(rating),
                 review: review.trim(),
                 listItemUri: itemUri,
                 createdAt: now,
@@ -888,7 +899,7 @@ export const createRouter = (ctx: AppContext) => {
                 oc
                   .columns(['authorDid', 'mediaItemId', 'mediaType'])
                   .doUpdateSet({
-                    rating: Number(updatedRecord.rating),
+                    rating: Number(rating),
                     review: review.trim(),
                     updatedAt: now,
                   })
@@ -961,8 +972,6 @@ export const createRouter = (ctx: AppContext) => {
 
         res.json({
           success: true,
-          rating: updatedRecord.rating,
-          review: updatedRecord.review,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to update item');
@@ -1003,7 +1012,7 @@ export const createRouter = (ctx: AppContext) => {
         // Get the item first to retrieve its data before deletion (for rating adjustment)
         const itemsResponse = await agent.api.com.atproto.repo.listRecords({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
         });
 
         const itemRecord = itemsResponse.data.records.find(
@@ -1024,12 +1033,25 @@ export const createRouter = (ctx: AppContext) => {
         // Delete the record from the user's repo
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.listitem',
+          collection: 'app.collectivesocial.feed.listitem',
           rkey: rkey,
         });
 
-        // If the item had a mediaItemId and rating, update the aggregated stats
         const itemData = itemRecord.value as any;
+
+        // Decrement totalSaves for this media item
+        if (itemData.mediaItemId) {
+          await ctx.db
+            .updateTable('media_items')
+            .set((eb) => ({
+              totalSaves: eb('totalSaves', '-', 1),
+              updatedAt: new Date(),
+            }))
+            .where('id', '=', itemData.mediaItemId)
+            .execute();
+        }
+
+        // If the item had a rating, update the aggregated review stats
         if (itemData.mediaItemId && itemData.rating !== undefined) {
           const currentItem = await ctx.db
             .selectFrom('media_items')
@@ -1103,7 +1125,7 @@ export const createRouter = (ctx: AppContext) => {
         // List records of type app.collectivesocial.list from the specified user's repo
         const response = await queryAgent.api.com.atproto.repo.listRecords({
           repo: did,
-          collection: 'app.collectivesocial.list',
+          collection: 'app.collectivesocial.feed.list',
         });
 
         // Filter to only public collections

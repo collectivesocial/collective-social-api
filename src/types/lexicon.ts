@@ -3,9 +3,9 @@
  * These correspond to the lexicon definitions in /lexicons
  */
 
-export namespace AppCollectiveSocialList {
+export namespace AppCollectiveSocialFeedList {
   export interface Record {
-    $type?: 'app.collectivesocial.list';
+    $type?: 'app.collectivesocial.feed.list';
     name: string;
     description?: string;
     visibility?: 'public' | 'private';
@@ -19,14 +19,14 @@ export namespace AppCollectiveSocialList {
   }
 }
 
-export namespace AppCollectiveSocialListitem {
+export namespace AppCollectiveSocialFeedListitem {
   export interface Recommendation {
     did: string;
     suggestedAt: string;
   }
 
   export interface Record {
-    $type?: 'app.collectivesocial.listitem';
+    $type?: 'app.collectivesocial.feed.listitem';
     list: string; // AT-URI of the list
     title: string;
     creator?: string;
@@ -40,11 +40,31 @@ export namespace AppCollectiveSocialListitem {
       | 'game'
       | 'music';
     status?: 'want' | 'in-progress' | 'completed';
-    rating?: number; // 0-5, supports 0.5 increments
-    review?: string; // Public review stored in DB
-    notes?: string; // Private notes, ATProto only
     recommendations?: Recommendation[];
     completedAt?: string; // Timestamp when completed
+    review?: string; // AT-URI of associated review record
     createdAt: string;
+  }
+}
+
+export namespace AppCollectiveSocialFeedReview {
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.review';
+    title?: string;
+    text: string;
+    rating?: number; // 0-5, supports 0.5 increments
+    notes?: string; // Private notes
+    mediaItemId?: number; // Reference to media_items table
+    mediaType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music';
+    listItem?: string; // AT-URI of the associated list item
+    createdAt: string;
+    updatedAt?: string;
   }
 }
