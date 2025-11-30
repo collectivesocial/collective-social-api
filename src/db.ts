@@ -472,6 +472,59 @@ migrations['011'] = {
   },
 };
 
+migrations['012'] = {
+  async up(db: Kysely<unknown>) {
+    // Add rating distribution columns to track count of each rating value
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('rating0', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating0_5', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating1', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating1_5', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating2', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating2_5', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating3', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating3_5', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating4', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating4_5', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('rating5', 'integer', (col) => col.notNull().defaultTo(0))
+      .execute();
+
+    // Populate rating distribution from existing reviews
+    await sql`
+      UPDATE media_items
+      SET 
+        rating0 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 0), 0),
+        rating0_5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 0.5), 0),
+        rating1 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 1), 0),
+        rating1_5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 1.5), 0),
+        rating2 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 2), 0),
+        rating2_5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 2.5), 0),
+        rating3 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 3), 0),
+        rating3_5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 3.5), 0),
+        rating4 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 4), 0),
+        rating4_5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 4.5), 0),
+        rating5 = COALESCE((SELECT COUNT(*) FROM reviews WHERE "mediaItemId" = media_items.id AND rating = 5), 0)
+    `.execute(db);
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('media_items')
+      .dropColumn('rating0')
+      .dropColumn('rating0_5')
+      .dropColumn('rating1')
+      .dropColumn('rating1_5')
+      .dropColumn('rating2')
+      .dropColumn('rating2_5')
+      .dropColumn('rating3')
+      .dropColumn('rating3_5')
+      .dropColumn('rating4')
+      .dropColumn('rating4_5')
+      .dropColumn('rating5')
+      .execute();
+  },
+};
+
 // APIs
 
 export const createDb = (location: string): Database => {

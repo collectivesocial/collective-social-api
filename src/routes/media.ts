@@ -235,6 +235,19 @@ export const createRouter = (ctx: AppContext) => {
           averageRating: item.averageRating
             ? parseFloat(item.averageRating.toString())
             : null,
+          ratingDistribution: {
+            rating0: item.rating0,
+            rating0_5: item.rating0_5,
+            rating1: item.rating1,
+            rating1_5: item.rating1_5,
+            rating2: item.rating2,
+            rating2_5: item.rating2_5,
+            rating3: item.rating3,
+            rating3_5: item.rating3_5,
+            rating4: item.rating4,
+            rating4_5: item.rating4_5,
+            rating5: item.rating5,
+          },
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch media item');

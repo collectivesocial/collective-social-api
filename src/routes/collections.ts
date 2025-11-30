@@ -8,6 +8,13 @@ import {
   AppCollectiveSocialFeedReview,
 } from '../types/lexicon';
 import { getSessionAgent } from '../auth/agent';
+import { sql } from 'kysely';
+
+// Helper function to get the rating column name for a given rating value
+const getRatingColumnName = (rating: number): string => {
+  const ratingStr = rating.toString().replace('.', '_');
+  return `rating${ratingStr}` as any;
+};
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -558,14 +565,18 @@ export const createRouter = (ctx: AppContext) => {
                     (currentAvg * currentItem.totalRatings + Number(rating)) /
                     newTotalRatings;
 
+                  // Increment the specific rating count
+                  const ratingColumn = getRatingColumnName(Number(rating));
+
                   await ctx.db
                     .updateTable('media_items')
                     .set({
                       totalRatings: newTotalRatings,
                       totalReviews: newTotalReviews,
                       averageRating: parseFloat(newAverage.toFixed(2)),
+                      [ratingColumn]: sql`"${sql.raw(ratingColumn)}" + 1`,
                       updatedAt: new Date(),
-                    })
+                    } as any)
                     .where('id', '=', mediaItemId)
                     .execute();
 
@@ -606,12 +617,17 @@ export const createRouter = (ctx: AppContext) => {
                         : 0;
 
                   if (oldRating !== Number(rating)) {
-                    // Rating changed - recalculate average
+                    // Rating changed - recalculate average and update rating distribution
                     const newAverage =
                       (currentAvg * currentItem.totalRatings -
                         Number(oldRating) +
                         Number(rating)) /
                       currentItem.totalRatings;
+
+                    const oldRatingColumn = getRatingColumnName(
+                      Number(oldRating)
+                    );
+                    const newRatingColumn = getRatingColumnName(Number(rating));
 
                     await ctx.db
                       .updateTable('media_items')
@@ -619,8 +635,10 @@ export const createRouter = (ctx: AppContext) => {
                         totalReviews:
                           currentItem.totalReviews + reviewCountChange,
                         averageRating: parseFloat(newAverage.toFixed(2)),
+                        [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
+                        [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
                         updatedAt: new Date(),
-                      })
+                      } as any)
                       .where('id', '=', mediaItemId)
                       .execute();
                   } else if (reviewCountChange !== 0) {
@@ -647,23 +665,33 @@ export const createRouter = (ctx: AppContext) => {
                 .execute();
 
               if (existingReview && oldRating !== undefined) {
-                // Decrement totalReviews and recalculate average
+                // Decrement totalRatings, totalReviews, rating distribution, and recalculate average
                 const currentItem = await ctx.db
                   .selectFrom('media_items')
-                  .select(['totalReviews', 'averageRating'])
+                  .select(['totalRatings', 'totalReviews', 'averageRating'])
                   .where('id', '=', mediaItemId)
                   .executeTakeFirst();
 
-                if (currentItem && currentItem.totalReviews > 0) {
-                  const newTotalReviews = currentItem.totalReviews - 1;
-                  if (newTotalReviews === 0) {
+                if (currentItem && currentItem.totalRatings > 0) {
+                  const newTotalRatings = currentItem.totalRatings - 1;
+                  const hadTextReview =
+                    existingReview.review &&
+                    existingReview.review.trim().length > 0;
+                  const newTotalReviews = hadTextReview
+                    ? currentItem.totalReviews - 1
+                    : currentItem.totalReviews;
+                  const ratingColumn = getRatingColumnName(Number(oldRating));
+
+                  if (newTotalRatings === 0) {
                     await ctx.db
                       .updateTable('media_items')
                       .set({
+                        totalRatings: 0,
                         totalReviews: 0,
                         averageRating: 0,
+                        [ratingColumn]: sql`"${sql.raw(ratingColumn)}" - 1`,
                         updatedAt: new Date(),
-                      })
+                      } as any)
                       .where('id', '=', mediaItemId)
                       .execute();
                   } else {
@@ -671,17 +699,19 @@ export const createRouter = (ctx: AppContext) => {
                       ? parseFloat(currentItem.averageRating.toString())
                       : 0;
                     const newAverage =
-                      (currentAvg * currentItem.totalReviews -
+                      (currentAvg * currentItem.totalRatings -
                         Number(oldRating)) /
-                      newTotalReviews;
+                      newTotalRatings;
 
                     await ctx.db
                       .updateTable('media_items')
                       .set({
+                        totalRatings: newTotalRatings,
                         totalReviews: newTotalReviews,
                         averageRating: parseFloat(newAverage.toFixed(2)),
+                        [ratingColumn]: sql`"${sql.raw(ratingColumn)}" - 1`,
                         updatedAt: new Date(),
-                      })
+                      } as any)
                       .where('id', '=', mediaItemId)
                       .execute();
                   }
