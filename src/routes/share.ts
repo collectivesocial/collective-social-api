@@ -161,5 +161,102 @@ export const createRouter = (ctx: AppContext) => {
     }
   });
 
+  // GET /user/links - Get all share links for the authenticated user
+  router.get(
+    '/user/links',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        const userDid = agent.did!;
+        const origin = req.get('origin') || 'http://127.0.0.1:5173';
+
+        // Fetch all share links for this user with media item details
+        const shareLinks = await ctx.db
+          .selectFrom('share_links')
+          .leftJoin('media_items', 'share_links.mediaItemId', 'media_items.id')
+          .select([
+            'share_links.id',
+            'share_links.shortCode',
+            'share_links.mediaItemId',
+            'share_links.mediaType',
+            'share_links.timesClicked',
+            'share_links.createdAt',
+            'share_links.updatedAt',
+            'media_items.title',
+            'media_items.creator',
+            'media_items.coverImage',
+          ])
+          .where('share_links.userDid', '=', userDid)
+          .orderBy('share_links.createdAt', 'desc')
+          .execute();
+
+        // Add full URL to each link
+        const linksWithUrls = shareLinks.map((link) => ({
+          ...link,
+          url: `${origin}/share/${link.shortCode}`,
+        }));
+
+        res.json({ links: linksWithUrls });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch user share links');
+        res.status(500).json({ error: 'Failed to fetch share links' });
+      }
+    })
+  );
+
+  // DELETE /user/links/:id - Delete a share link
+  router.delete(
+    '/user/links/:id',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        const userDid = agent.did!;
+        const linkId = parseInt(req.params.id);
+
+        if (isNaN(linkId)) {
+          return res.status(400).json({ error: 'Invalid link ID' });
+        }
+
+        // Verify the link belongs to this user before deleting
+        const link = await ctx.db
+          .selectFrom('share_links')
+          .select(['id', 'userDid'])
+          .where('id', '=', linkId)
+          .executeTakeFirst();
+
+        if (!link) {
+          return res.status(404).json({ error: 'Share link not found' });
+        }
+
+        if (link.userDid !== userDid) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to delete this link' });
+        }
+
+        // Delete the share link
+        await ctx.db
+          .deleteFrom('share_links')
+          .where('id', '=', linkId)
+          .execute();
+
+        ctx.logger.info({ linkId, userDid }, 'Share link deleted');
+
+        res.json({ success: true, message: 'Share link deleted' });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete share link');
+        res.status(500).json({ error: 'Failed to delete share link' });
+      }
+    })
+  );
+
   return router;
 };
