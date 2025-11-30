@@ -45,11 +45,19 @@ export const createRouter = (ctx: AppContext) => {
           .executeTakeFirst();
 
         if (existing) {
+          // Get media item details
+          const mediaItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['title'])
+            .where('id', '=', mediaItemId)
+            .executeTakeFirst();
+
           // Return existing share link
           return res.json({
             shortCode: existing.shortCode,
             url: `${origin}/share/${existing.shortCode}`,
             timesClicked: existing.timesClicked,
+            title: mediaItem?.title || null,
           });
         }
 
@@ -94,6 +102,13 @@ export const createRouter = (ctx: AppContext) => {
           .returningAll()
           .executeTakeFirstOrThrow();
 
+        // Get media item details
+        const mediaItem = await ctx.db
+          .selectFrom('media_items')
+          .select(['title'])
+          .where('id', '=', mediaItemId)
+          .executeTakeFirst();
+
         ctx.logger.info(
           { userDid, mediaItemId, mediaType, shortCode },
           'Share link created'
@@ -103,6 +118,7 @@ export const createRouter = (ctx: AppContext) => {
           shortCode: shareLink.shortCode,
           url: `${origin}/share/${shareLink.shortCode}`,
           timesClicked: shareLink.timesClicked,
+          title: mediaItem?.title || null,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create share link');
