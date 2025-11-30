@@ -20,7 +20,6 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const profile = await agent.getProfile({ actor: agent.did! });
-        console.log({ profile });
         res.json({
           did: profile.data.did,
           handle: profile.data.handle,
