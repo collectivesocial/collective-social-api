@@ -34,7 +34,6 @@ export const createRouter = (ctx: AppContext) => {
 
         // Get the client URL from Origin header or fallback to localhost
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
-        console.log({ origin });
 
         // Check if a share link already exists for this user and media item
         const existing = await ctx.db
