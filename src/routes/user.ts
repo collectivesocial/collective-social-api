@@ -184,5 +184,55 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // DELETE /users/me - Delete user account and all associated data
+  router.delete(
+    '/me',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const userDid = agent.did!;
+
+      try {
+        // Delete all user-related data in a transaction-like fashion
+        // 1. Delete reviews authored by this user
+        await ctx.db
+          .deleteFrom('reviews')
+          .where('authorDid', '=', userDid)
+          .execute();
+
+        // 2. Delete feedback submitted by this user
+        await ctx.db
+          .deleteFrom('feedback')
+          .where('userDid', '=', userDid)
+          .execute();
+
+        // 3. Delete feed events for this user
+        await ctx.db
+          .deleteFrom('feed_events')
+          .where('userDid', '=', userDid)
+          .execute();
+
+        // 4. Delete the user record
+        await ctx.db.deleteFrom('users').where('did', '=', userDid).execute();
+
+        // 5. Clear session
+        res.clearCookie('connect.sid');
+
+        ctx.logger.info({ userDid }, 'User account deleted successfully');
+
+        res.json({
+          success: true,
+          message: 'Account and all associated data deleted successfully',
+        });
+      } catch (err) {
+        ctx.logger.error({ err, userDid }, 'Failed to delete user account');
+        res.status(500).json({ error: 'Failed to delete account' });
+      }
+    })
+  );
+
   return router;
 };
