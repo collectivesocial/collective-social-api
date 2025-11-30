@@ -22,6 +22,7 @@ export type PublicReview = {
   rating: number;
   review: string;
   listItemUri: string;
+  reviewUri: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -346,6 +347,26 @@ migrations['007'] = {
       .alterTable('media_items')
       .dropColumn('totalSaves')
       .execute();
+  },
+};
+
+migrations['008'] = {
+  async up(db: Kysely<unknown>) {
+    // Add reviewUri column to reviews table to store AT-URI of review records
+    await db.schema
+      .alterTable('reviews')
+      .addColumn('reviewUri', 'varchar')
+      .execute();
+
+    // Create index for review URI lookups
+    await db.schema
+      .createIndex('reviews_review_uri_idx')
+      .on('reviews')
+      .column('reviewUri')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('reviews').dropColumn('reviewUri').execute();
   },
 };
 

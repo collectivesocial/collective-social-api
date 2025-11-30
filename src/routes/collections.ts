@@ -497,6 +497,18 @@ export const createRouter = (ctx: AppContext) => {
             mediaItemId &&
             mediaType
           ) {
+            // Check if review already exists
+            const existingReview = await ctx.db
+              .selectFrom('reviews')
+              .select(['id', 'rating'])
+              .where('authorDid', '=', agent.did!)
+              .where('mediaItemId', '=', mediaItemId)
+              .where('mediaType', '=', mediaType)
+              .executeTakeFirst();
+
+            const isNewReview = !existingReview;
+            const oldRating = existingReview?.rating;
+
             if (review && review.trim()) {
               const now = new Date();
               await ctx.db
@@ -508,6 +520,7 @@ export const createRouter = (ctx: AppContext) => {
                   rating: Number(rating),
                   review: review.trim(),
                   listItemUri: existingItem.uri,
+                  reviewUri: null, // Will be updated when AT Protocol review record is created
                   createdAt: now,
                   updatedAt: now,
                 } as any)
@@ -521,81 +534,129 @@ export const createRouter = (ctx: AppContext) => {
                     })
                 )
                 .execute();
+
+              // Update aggregated stats
+              const currentItem = await ctx.db
+                .selectFrom('media_items')
+                .select(['totalReviews', 'averageRating'])
+                .where('id', '=', mediaItemId)
+                .executeTakeFirst();
+
+              if (currentItem) {
+                const currentAvg = currentItem.averageRating
+                  ? parseFloat(currentItem.averageRating.toString())
+                  : 0;
+
+                if (isNewReview) {
+                  // Adding a new review
+                  const newTotalReviews = currentItem.totalReviews + 1;
+                  const newAverage =
+                    (currentAvg * currentItem.totalReviews + Number(rating)) /
+                    newTotalReviews;
+
+                  await ctx.db
+                    .updateTable('media_items')
+                    .set({
+                      totalReviews: newTotalReviews,
+                      averageRating: parseFloat(newAverage.toFixed(2)),
+                      updatedAt: new Date(),
+                    })
+                    .where('id', '=', mediaItemId)
+                    .execute();
+
+                  // Create feed event for new review
+                  try {
+                    const profile = await agent.getProfile({
+                      actor: agent.did!,
+                    });
+                    const userHandle = profile.data.handle;
+                    const eventName = `${userHandle} reviewed "${title}"`;
+
+                    await ctx.db
+                      .insertInto('feed_events')
+                      .values({
+                        eventName,
+                        mediaLink: `/items/${mediaItemId}`,
+                        userDid: agent.did!,
+                        createdAt: new Date(),
+                      } as any)
+                      .execute();
+                  } catch (err) {
+                    ctx.logger.error(
+                      { err },
+                      'Failed to create review feed event'
+                    );
+                  }
+                } else if (oldRating !== Number(rating)) {
+                  // Updating existing review rating
+                  const newAverage =
+                    (currentAvg * currentItem.totalReviews -
+                      Number(oldRating) +
+                      Number(rating)) /
+                    currentItem.totalReviews;
+
+                  await ctx.db
+                    .updateTable('media_items')
+                    .set({
+                      averageRating: parseFloat(newAverage.toFixed(2)),
+                      updatedAt: new Date(),
+                    })
+                    .where('id', '=', mediaItemId)
+                    .execute();
+                }
+              }
             } else if (review === '' || review === null) {
+              // Delete review and update stats
               await ctx.db
                 .deleteFrom('reviews')
                 .where('authorDid', '=', agent.did!)
                 .where('mediaItemId', '=', mediaItemId)
                 .where('mediaType', '=', mediaType)
                 .execute();
-            }
-          }
 
-          // Update aggregated stats if rating changed
-          // Note: We need to track old rating from the database, not from the listitem record
-          const existingReview = await ctx.db
-            .selectFrom('reviews')
-            .select(['rating'])
-            .where('authorDid', '=', agent.did!)
-            .where('mediaItemId', '=', mediaItemId || '')
-            .where('mediaType', '=', mediaType || '')
-            .executeTakeFirst();
-          const oldRating = existingReview?.rating;
-
-          if (
-            mediaItemId &&
-            rating !== undefined &&
-            oldRating !== Number(rating)
-          ) {
-            const currentItem = await ctx.db
-              .selectFrom('media_items')
-              .select(['totalReviews', 'averageRating'])
-              .where('id', '=', mediaItemId)
-              .executeTakeFirst();
-
-            if (currentItem && currentItem.totalReviews > 0) {
-              const currentAvg = currentItem.averageRating
-                ? parseFloat(currentItem.averageRating.toString())
-                : 0;
-
-              let newAverage: number;
-              if (oldRating === undefined || oldRating === null) {
-                // Adding a new rating
-                const newTotalReviews = currentItem.totalReviews + 1;
-                newAverage =
-                  (currentAvg * currentItem.totalReviews + Number(rating)) /
-                  newTotalReviews;
-
-                await ctx.db
-                  .updateTable('media_items')
-                  .set({
-                    totalReviews: newTotalReviews,
-                    averageRating: parseFloat(newAverage.toFixed(2)),
-                    updatedAt: new Date(),
-                  })
+              if (existingReview && oldRating !== undefined) {
+                // Decrement totalReviews and recalculate average
+                const currentItem = await ctx.db
+                  .selectFrom('media_items')
+                  .select(['totalReviews', 'averageRating'])
                   .where('id', '=', mediaItemId)
-                  .execute();
-              } else {
-                // Updating existing rating
-                newAverage =
-                  (currentAvg * currentItem.totalReviews -
-                    Number(oldRating) +
-                    Number(rating)) /
-                  currentItem.totalReviews;
+                  .executeTakeFirst();
 
-                await ctx.db
-                  .updateTable('media_items')
-                  .set({
-                    averageRating: parseFloat(newAverage.toFixed(2)),
-                    updatedAt: new Date(),
-                  })
-                  .where('id', '=', mediaItemId)
-                  .execute();
+                if (currentItem && currentItem.totalReviews > 0) {
+                  const newTotalReviews = currentItem.totalReviews - 1;
+                  if (newTotalReviews === 0) {
+                    await ctx.db
+                      .updateTable('media_items')
+                      .set({
+                        totalReviews: 0,
+                        averageRating: 0,
+                        updatedAt: new Date(),
+                      })
+                      .where('id', '=', mediaItemId)
+                      .execute();
+                  } else {
+                    const currentAvg = currentItem.averageRating
+                      ? parseFloat(currentItem.averageRating.toString())
+                      : 0;
+                    const newAverage =
+                      (currentAvg * currentItem.totalReviews -
+                        Number(oldRating)) /
+                      newTotalReviews;
+
+                    await ctx.db
+                      .updateTable('media_items')
+                      .set({
+                        totalReviews: newTotalReviews,
+                        averageRating: parseFloat(newAverage.toFixed(2)),
+                        updatedAt: new Date(),
+                      })
+                      .where('id', '=', mediaItemId)
+                      .execute();
+                  }
+                }
               }
             }
-          }
-
-          // Create feed event for status changes
+          } // Create feed event for status changes
           if (status && status !== oldStatus && mediaType === 'book') {
             try {
               const profile = await agent.getProfile({ actor: agent.did! });
@@ -690,6 +751,17 @@ export const createRouter = (ctx: AppContext) => {
           mediaItemId &&
           mediaType
         ) {
+          // Check if review already exists
+          const existingReview = await ctx.db
+            .selectFrom('reviews')
+            .select(['id', 'rating'])
+            .where('authorDid', '=', agent.did!)
+            .where('mediaItemId', '=', mediaItemId)
+            .where('mediaType', '=', mediaType)
+            .executeTakeFirst();
+
+          const isNewReview = !existingReview;
+          const oldRating = existingReview?.rating;
           const now = new Date();
 
           // Upsert review - one review per user per media item
@@ -702,6 +774,7 @@ export const createRouter = (ctx: AppContext) => {
               rating: Number(rating),
               review: review.trim(),
               listItemUri: response.data.uri,
+              reviewUri: null, // Will be updated when AT Protocol review record is created
               createdAt: now,
               updatedAt: now,
             } as any)
@@ -716,11 +789,8 @@ export const createRouter = (ctx: AppContext) => {
                 })
             )
             .execute();
-        }
 
-        // If we have a mediaItemId and a rating, update the aggregated stats
-        if (mediaItemId && rating !== undefined) {
-          // Get current stats
+          // Update aggregated stats
           const currentItem = await ctx.db
             .selectFrom('media_items')
             .select(['totalReviews', 'averageRating'])
@@ -728,24 +798,62 @@ export const createRouter = (ctx: AppContext) => {
             .executeTakeFirst();
 
           if (currentItem) {
-            const newTotalReviews = currentItem.totalReviews + 1;
             const currentAvg = currentItem.averageRating
               ? parseFloat(currentItem.averageRating.toString())
               : 0;
-            const newAverage =
-              (currentAvg * currentItem.totalReviews + Number(rating)) /
-              newTotalReviews;
 
-            // Update media item with new stats
-            await ctx.db
-              .updateTable('media_items')
-              .set({
-                totalReviews: newTotalReviews,
-                averageRating: parseFloat(newAverage.toFixed(2)),
-                updatedAt: new Date(),
-              })
-              .where('id', '=', mediaItemId)
-              .execute();
+            if (isNewReview) {
+              // Adding a new review
+              const newTotalReviews = currentItem.totalReviews + 1;
+              const newAverage =
+                (currentAvg * currentItem.totalReviews + Number(rating)) /
+                newTotalReviews;
+
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  totalReviews: newTotalReviews,
+                  averageRating: parseFloat(newAverage.toFixed(2)),
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', mediaItemId)
+                .execute();
+
+              // Create feed event for new review
+              try {
+                const profile = await agent.getProfile({ actor: agent.did! });
+                const userHandle = profile.data.handle;
+                const eventName = `${userHandle} reviewed "${title}"`;
+
+                await ctx.db
+                  .insertInto('feed_events')
+                  .values({
+                    eventName,
+                    mediaLink: `/items/${mediaItemId}`,
+                    userDid: agent.did!,
+                    createdAt: new Date(),
+                  } as any)
+                  .execute();
+              } catch (err) {
+                ctx.logger.error({ err }, 'Failed to create review feed event');
+              }
+            } else if (oldRating !== Number(rating)) {
+              // Updating existing review rating
+              const newAverage =
+                (currentAvg * currentItem.totalReviews -
+                  Number(oldRating) +
+                  Number(rating)) /
+                currentItem.totalReviews;
+
+              await ctx.db
+                .updateTable('media_items')
+                .set({
+                  averageRating: parseFloat(newAverage.toFixed(2)),
+                  updatedAt: new Date(),
+                })
+                .where('id', '=', mediaItemId)
+                .execute();
+            }
           }
         }
 
@@ -849,12 +957,13 @@ export const createRouter = (ctx: AppContext) => {
         // Get old rating from database reviews table
         const existingReview = await ctx.db
           .selectFrom('reviews')
-          .select(['rating'])
+          .select(['id', 'rating'])
           .where('authorDid', '=', agent.did!)
           .where('mediaItemId', '=', mediaItemId || '')
           .where('mediaType', '=', mediaType || '')
           .executeTakeFirst();
         const oldRating = existingReview?.rating;
+        const isNewReview = !existingReview;
 
         // Extract rkey from itemUri
         const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
@@ -892,6 +1001,7 @@ export const createRouter = (ctx: AppContext) => {
                 rating: Number(rating),
                 review: review.trim(),
                 listItemUri: itemUri,
+                reviewUri: null, // Will be updated when AT Protocol review record is created
                 createdAt: now,
                 updatedAt: now,
               } as any)
@@ -905,67 +1015,125 @@ export const createRouter = (ctx: AppContext) => {
                   })
               )
               .execute();
+
+            // Update aggregated stats
+            const currentItem = await ctx.db
+              .selectFrom('media_items')
+              .select(['totalReviews', 'averageRating'])
+              .where('id', '=', mediaItemId)
+              .executeTakeFirst();
+
+            if (currentItem) {
+              const currentAvg = currentItem.averageRating
+                ? parseFloat(currentItem.averageRating.toString())
+                : 0;
+
+              if (isNewReview) {
+                // Adding a new review
+                const newTotalReviews = currentItem.totalReviews + 1;
+                const newAverage =
+                  (currentAvg * currentItem.totalReviews + Number(rating)) /
+                  newTotalReviews;
+
+                await ctx.db
+                  .updateTable('media_items')
+                  .set({
+                    totalReviews: newTotalReviews,
+                    averageRating: parseFloat(newAverage.toFixed(2)),
+                    updatedAt: new Date(),
+                  })
+                  .where('id', '=', mediaItemId)
+                  .execute();
+
+                // Create feed event for new review
+                try {
+                  const profile = await agent.getProfile({ actor: agent.did! });
+                  const userHandle = profile.data.handle;
+                  const title = currentData.title;
+                  const eventName = `${userHandle} reviewed "${title}"`;
+
+                  await ctx.db
+                    .insertInto('feed_events')
+                    .values({
+                      eventName,
+                      mediaLink: `/items/${mediaItemId}`,
+                      userDid: agent.did!,
+                      createdAt: new Date(),
+                    } as any)
+                    .execute();
+                } catch (err) {
+                  ctx.logger.error(
+                    { err },
+                    'Failed to create review feed event'
+                  );
+                }
+              } else if (oldRating !== Number(rating)) {
+                // Updating existing review rating
+                const newAverage =
+                  (currentAvg * currentItem.totalReviews -
+                    Number(oldRating) +
+                    Number(rating)) /
+                  currentItem.totalReviews;
+
+                await ctx.db
+                  .updateTable('media_items')
+                  .set({
+                    averageRating: parseFloat(newAverage.toFixed(2)),
+                    updatedAt: new Date(),
+                  })
+                  .where('id', '=', mediaItemId)
+                  .execute();
+              }
+            }
           } else if (review === '' || review === null) {
-            // Delete review if explicitly cleared
+            // Delete review and update stats if explicitly cleared
             await ctx.db
               .deleteFrom('reviews')
               .where('authorDid', '=', agent.did!)
               .where('mediaItemId', '=', mediaItemId)
               .where('mediaType', '=', mediaType)
               .execute();
-          }
-        }
 
-        // Update aggregated stats if rating changed and we have a mediaItemId
-        if (
-          mediaItemId &&
-          rating !== undefined &&
-          oldRating !== Number(rating)
-        ) {
-          const currentItem = await ctx.db
-            .selectFrom('media_items')
-            .select(['totalReviews', 'averageRating'])
-            .where('id', '=', mediaItemId)
-            .executeTakeFirst();
-
-          if (currentItem && currentItem.totalReviews > 0) {
-            const currentAvg = currentItem.averageRating
-              ? parseFloat(currentItem.averageRating.toString())
-              : 0;
-
-            let newAverage: number;
-            if (oldRating === undefined || oldRating === null) {
-              // Adding a new rating
-              const newTotalReviews = currentItem.totalReviews + 1;
-              newAverage =
-                (currentAvg * currentItem.totalReviews + Number(rating)) /
-                newTotalReviews;
-
-              await ctx.db
-                .updateTable('media_items')
-                .set({
-                  totalReviews: newTotalReviews,
-                  averageRating: parseFloat(newAverage.toFixed(2)),
-                  updatedAt: new Date(),
-                })
+            if (existingReview && oldRating !== undefined) {
+              // Decrement totalReviews and recalculate average
+              const currentItem = await ctx.db
+                .selectFrom('media_items')
+                .select(['totalReviews', 'averageRating'])
                 .where('id', '=', mediaItemId)
-                .execute();
-            } else {
-              // Updating existing rating
-              newAverage =
-                (currentAvg * currentItem.totalReviews -
-                  Number(oldRating) +
-                  Number(rating)) /
-                currentItem.totalReviews;
+                .executeTakeFirst();
 
-              await ctx.db
-                .updateTable('media_items')
-                .set({
-                  averageRating: parseFloat(newAverage.toFixed(2)),
-                  updatedAt: new Date(),
-                })
-                .where('id', '=', mediaItemId)
-                .execute();
+              if (currentItem && currentItem.totalReviews > 0) {
+                const newTotalReviews = currentItem.totalReviews - 1;
+                if (newTotalReviews === 0) {
+                  await ctx.db
+                    .updateTable('media_items')
+                    .set({
+                      totalReviews: 0,
+                      averageRating: 0,
+                      updatedAt: new Date(),
+                    })
+                    .where('id', '=', mediaItemId)
+                    .execute();
+                } else {
+                  const currentAvg = currentItem.averageRating
+                    ? parseFloat(currentItem.averageRating.toString())
+                    : 0;
+                  const newAverage =
+                    (currentAvg * currentItem.totalReviews -
+                      Number(oldRating)) /
+                    newTotalReviews;
+
+                  await ctx.db
+                    .updateTable('media_items')
+                    .set({
+                      totalReviews: newTotalReviews,
+                      averageRating: parseFloat(newAverage.toFixed(2)),
+                      updatedAt: new Date(),
+                    })
+                    .where('id', '=', mediaItemId)
+                    .execute();
+                }
+              }
             }
           }
         }

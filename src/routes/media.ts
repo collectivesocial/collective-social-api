@@ -230,6 +230,7 @@ export const createRouter = (ctx: AppContext) => {
           description: item.description,
           publishedYear: item.publishedYear,
           totalReviews: item.totalReviews,
+          totalSaves: item.totalSaves,
           averageRating: item.averageRating
             ? parseFloat(item.averageRating.toString())
             : null,
@@ -237,6 +238,80 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch media item');
         res.status(500).json({ error: 'Failed to fetch media item' });
+      }
+    })
+  );
+
+  // GET /media/:id/reviews - Get reviews for a media item
+  router.get(
+    '/:id/reviews',
+    handler(async (req: Request, res: Response) => {
+      const { id } = req.params;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      try {
+        // Get reviews from database
+        const reviews = await ctx.db
+          .selectFrom('reviews')
+          .selectAll()
+          .where('mediaItemId', '=', parseInt(id))
+          .orderBy('createdAt', 'desc')
+          .limit(limit)
+          .offset(offset)
+          .execute();
+
+        // Fetch user profiles for each review author
+        const reviewsWithProfiles = await Promise.all(
+          reviews.map(async (review) => {
+            try {
+              const response = await fetch(
+                `https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${review.authorDid}`
+              );
+              const profile = (await response.json()) as any;
+
+              return {
+                id: review.id,
+                authorDid: review.authorDid,
+                authorHandle: profile.handle,
+                authorDisplayName: profile.displayName || profile.handle,
+                authorAvatar: profile.avatar || null,
+                rating: parseFloat(review.rating.toString()),
+                review: review.review,
+                reviewUri: review.reviewUri,
+                listItemUri: review.listItemUri,
+                createdAt: review.createdAt,
+                updatedAt: review.updatedAt,
+              };
+            } catch (err) {
+              ctx.logger.error(
+                { err, did: review.authorDid },
+                'Failed to fetch profile for review author'
+              );
+              return {
+                id: review.id,
+                authorDid: review.authorDid,
+                authorHandle: review.authorDid,
+                authorDisplayName: review.authorDid,
+                authorAvatar: null,
+                rating: parseFloat(review.rating.toString()),
+                review: review.review,
+                reviewUri: review.reviewUri,
+                listItemUri: review.listItemUri,
+                createdAt: review.createdAt,
+                updatedAt: review.updatedAt,
+              };
+            }
+          })
+        );
+
+        res.json({
+          reviews: reviewsWithProfiles,
+          hasMore: reviews.length === limit,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch reviews');
+        res.status(500).json({ error: 'Failed to fetch reviews' });
       }
     })
   );
