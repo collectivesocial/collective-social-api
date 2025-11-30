@@ -29,6 +29,7 @@
     "http-terminator": "^3.2.0",
     "iron-session": "^8.0.4",
     "kysely": "^0.28.8",
+    "nanoid": "^5.1.6",
     "nodemon": "^3.1.11",
     "pg": "^8.16.3",
     "save-dev": "^0.0.1-security"

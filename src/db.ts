@@ -12,6 +12,7 @@ import {
   MigrationProvider,
   Migrator,
   PostgresDialect,
+  Generated,
 } from 'kysely';
 
 export type PublicReview = {
@@ -46,6 +47,17 @@ export type FeedEvent = {
   createdAt: Date;
 };
 
+export type ShareLink = {
+  id: Generated<number>;
+  shortCode: string;
+  userDid: string;
+  mediaItemId: number;
+  mediaType: string;
+  timesClicked: Generated<number>;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -54,6 +66,7 @@ export type DatabaseSchema = {
   reviews: PublicReview;
   feedback: Feedback;
   feed_events: FeedEvent;
+  share_links: ShareLink;
 };
 
 // Migrations
@@ -367,6 +380,65 @@ migrations['008'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.alterTable('reviews').dropColumn('reviewUri').execute();
+  },
+};
+
+migrations['009'] = {
+  async up(db: Kysely<unknown>) {
+    // Create share_links table for tracking shared media items
+    await db.schema
+      .createTable('share_links')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('shortCode', 'varchar', (col) => col.notNull().unique())
+      .addColumn('userDid', 'varchar', (col) => col.notNull())
+      .addColumn('mediaItemId', 'integer', (col) => col.notNull())
+      .addColumn('mediaType', 'varchar', (col) => col.notNull())
+      .addColumn('timesShared', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull())
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull())
+      .execute();
+
+    // Create unique index on shortCode for fast lookups
+    await db.schema
+      .createIndex('share_links_short_code_idx')
+      .on('share_links')
+      .column('shortCode')
+      .unique()
+      .execute();
+
+    // Create index for user queries
+    await db.schema
+      .createIndex('share_links_user_did_idx')
+      .on('share_links')
+      .column('userDid')
+      .execute();
+
+    // Create composite index for media item lookups
+    await db.schema
+      .createIndex('share_links_media_idx')
+      .on('share_links')
+      .columns(['mediaItemId', 'mediaType'])
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('share_links').execute();
+  },
+};
+
+migrations['010'] = {
+  async up(db: Kysely<unknown>) {
+    // Rename timesShared column to timesClicked for clarity
+    await db.schema
+      .alterTable('share_links')
+      .renameColumn('timesShared', 'timesClicked')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    // Revert the column name back to timesShared
+    await db.schema
+      .alterTable('share_links')
+      .renameColumn('timesClicked', 'timesShared')
+      .execute();
   },
 };
 
