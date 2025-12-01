@@ -37,6 +37,19 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.feed.list',
         });
 
+        // Get all list items to count items per collection
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+        });
+
+        // Count items per collection
+        const itemCounts: Record<string, number> = {};
+        itemsResponse.data.records.forEach((record: any) => {
+          const listUri = record.value.list;
+          itemCounts[listUri] = (itemCounts[listUri] || 0) + 1;
+        });
+
         res.json({
           collections: response.data.records.map((record: any) => ({
             uri: record.uri,
@@ -48,6 +61,7 @@ export const createRouter = (ctx: AppContext) => {
             purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
+            itemCount: itemCounts[record.uri] || 0,
           })),
         });
       } catch (err) {
@@ -113,6 +127,7 @@ export const createRouter = (ctx: AppContext) => {
           visibility: record.visibility,
           purpose: record.purpose,
           isDefault: record.isDefault || false,
+          itemCount: 0,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create collection');
@@ -1358,6 +1373,21 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.feed.list',
         });
 
+        // Get all list items to count items per collection
+        const itemsResponse = await queryAgent.api.com.atproto.repo.listRecords(
+          {
+            repo: did,
+            collection: 'app.collectivesocial.feed.listitem',
+          }
+        );
+
+        // Count items per collection
+        const itemCounts: Record<string, number> = {};
+        itemsResponse.data.records.forEach((record: any) => {
+          const listUri = record.value.list;
+          itemCounts[listUri] = (itemCounts[listUri] || 0) + 1;
+        });
+
         // Filter to only public collections
         const publicCollections = response.data.records
           .filter((record: any) => {
@@ -1374,6 +1404,7 @@ export const createRouter = (ctx: AppContext) => {
             purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
+            itemCount: itemCounts[record.uri] || 0,
           }));
 
         // Get total public collection count
