@@ -22,6 +22,7 @@
     "@atproto/lexicon": "^0.5.2",
     "@atproto/oauth-client-node": "^0.3.11",
     "@atproto/sync": "^0.1.38",
+    "cheerio": "^1.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "envalid": "^8.1.1",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@atproto/lex-cli": "^0.9.7",
+    "@types/cheerio": "^0.22.35",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.1",

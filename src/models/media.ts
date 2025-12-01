@@ -2,11 +2,20 @@ import { Generated } from 'kysely';
 
 export interface MediaItem {
   id: Generated<number>;
-  mediaType: 'book' | 'movie' | 'tv' | 'podcast' | 'article' | 'game' | 'music';
+  mediaType:
+    | 'book'
+    | 'movie'
+    | 'tv'
+    | 'podcast'
+    | 'article'
+    | 'game'
+    | 'music'
+    | 'video';
   title: string;
   creator?: string; // Author, director, artist, etc.
   isbn?: string; // For books
   externalId?: string; // IMDB ID, etc.
+  url?: string; // For articles and videos
   coverImage?: string;
   description?: string;
   publishedYear?: number;

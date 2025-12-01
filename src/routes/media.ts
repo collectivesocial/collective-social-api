@@ -11,6 +11,11 @@ import {
   getCoverUrl,
   extractDescription,
 } from '../services/openlibrary';
+import {
+  normalizeUrl,
+  fetchUrlMetadata,
+  detectMediaTypeFromUrl,
+} from '../services/urlMetadata';
 
 type Session = { did?: string };
 
@@ -137,6 +142,87 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // POST /media/link - Fetch metadata from URL and add/find media item
+  router.post(
+    '/link',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { url, mediaType } = req.body;
+
+      if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
+      }
+
+      if (mediaType && mediaType !== 'article' && mediaType !== 'video') {
+        return res
+          .status(400)
+          .json({ error: 'Media type must be article or video' });
+      }
+
+      // Normalize URL (remove query params)
+      const normalizedUrl = normalizeUrl(url);
+
+      // Check if item already exists by URL
+      let existingItem = await ctx.db
+        .selectFrom('media_items')
+        .selectAll()
+        .where('url', '=', normalizedUrl)
+        .executeTakeFirst();
+
+      if (existingItem) {
+        return res.json({
+          title: existingItem.title,
+          author: existingItem.creator,
+          publishYear: existingItem.publishedYear,
+          isbn: null,
+          coverImage: existingItem.coverImage,
+          inDatabase: true,
+          totalRatings: existingItem.totalRatings,
+          totalReviews: existingItem.totalReviews,
+          averageRating: existingItem.averageRating
+            ? parseFloat(existingItem.averageRating.toString())
+            : null,
+          mediaItemId: existingItem.id,
+          url: existingItem.url,
+        });
+      }
+
+      // Fetch metadata from URL
+      const metadata = await fetchUrlMetadata(url);
+
+      if (!metadata.title) {
+        return res
+          .status(400)
+          .json({ error: 'Could not extract title from URL' });
+      }
+
+      // Detect media type if not provided
+      const detectedType = mediaType || detectMediaTypeFromUrl(url);
+
+      // Return metadata for frontend to display
+      res.json({
+        title: metadata.title,
+        author: metadata.author || metadata.siteName,
+        publishYear: null,
+        isbn: null,
+        coverImage: metadata.image,
+        inDatabase: false,
+        totalRatings: 0,
+        totalReviews: 0,
+        averageRating: null,
+        mediaItemId: null,
+        url: normalizedUrl,
+        mediaType: detectedType,
+      });
+    })
+  );
+
   // POST /media/add - Add a media item to database (called when adding to collection)
   router.post(
     '/add',
@@ -148,7 +234,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { title, creator, mediaType, isbn, coverImage, publishYear } =
+      const { title, creator, mediaType, isbn, coverImage, publishYear, url } =
         req.body;
 
       if (!title || !mediaType) {
@@ -161,8 +247,18 @@ export const createRouter = (ctx: AppContext) => {
         // Check if item already exists
         let existingItem = null;
 
-        // First try by ISBN if available (for books)
-        if (isbn && mediaType === 'book') {
+        // First try by URL if available (for articles and videos)
+        if (url && (mediaType === 'article' || mediaType === 'video')) {
+          existingItem = await ctx.db
+            .selectFrom('media_items')
+            .selectAll()
+            .where('url', '=', url)
+            .where('mediaType', '=', mediaType)
+            .executeTakeFirst();
+        }
+
+        // Try by ISBN if available (for books)
+        if (!existingItem && isbn && mediaType === 'book') {
           existingItem = await ctx.db
             .selectFrom('media_items')
             .selectAll()
@@ -171,7 +267,7 @@ export const createRouter = (ctx: AppContext) => {
             .executeTakeFirst();
         }
 
-        // If no ISBN or no match, try by title and creator (requires both)
+        // If no ISBN/URL or no match, try by title and creator (requires both)
         if (!existingItem && title && creator) {
           existingItem = await ctx.db
             .selectFrom('media_items')
@@ -206,6 +302,7 @@ export const createRouter = (ctx: AppContext) => {
             title,
             creator: creator || undefined,
             isbn: isbn || undefined,
+            url: url || undefined,
             coverImage: coverImage || undefined,
             description: description || undefined,
             publishedYear: publishYear || undefined,

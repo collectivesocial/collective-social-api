@@ -525,6 +525,19 @@ migrations['012'] = {
   },
 };
 
+migrations['013'] = {
+  async up(db: Kysely<unknown>) {
+    // Add url column for articles and videos
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('url', 'varchar', (col) => col)
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('media_items').dropColumn('url').execute();
+  },
+};
+
 // APIs
 
 export const createDb = (location: string): Database => {
