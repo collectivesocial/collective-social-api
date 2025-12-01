@@ -36,6 +36,7 @@ export interface OpenLibraryBook {
 
 interface OpenLibrarySearchResponse {
   docs: OpenLibrarySearchResult[];
+  numFound: number;
 }
 
 /**
@@ -43,11 +44,13 @@ interface OpenLibrarySearchResponse {
  */
 export async function searchBooks(
   query: string,
-  limit: number = 10
-): Promise<OpenLibrarySearchResult[]> {
+  limit: number = 10,
+  offset: number = 0
+): Promise<{ results: OpenLibrarySearchResult[]; total: number }> {
   const params = new URLSearchParams({
     q: query,
     limit: limit.toString(),
+    offset: offset.toString(),
   });
   const response = await fetch(
     `https://openlibrary.org/search.json?${params}`,
@@ -61,7 +64,10 @@ export async function searchBooks(
   }
 
   const data = (await response.json()) as OpenLibrarySearchResponse;
-  return data.docs || [];
+  return {
+    results: data.docs || [],
+    total: data.numFound || 0,
+  };
 }
 
 /**

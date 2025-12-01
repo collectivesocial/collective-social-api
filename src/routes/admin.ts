@@ -91,15 +91,44 @@ export const createRouter = (ctx: AppContext) => {
           .limit(10)
           .execute();
 
+        // Fetch handles for each user
+        const usersWithHandles = await Promise.all(
+          users.map(async (user) => {
+            try {
+              const response = await fetch(
+                `https://public.api.bsky.app/xrpc/com.atproto.repo.describeRepo?repo=${user.did}`
+              );
+              if (response.ok) {
+                const data = (await response.json()) as any;
+                return {
+                  did: user.did,
+                  handle: data.handle || null,
+                  firstLoginAt: user.firstLoginAt,
+                  lastActivityAt: user.lastActivityAt,
+                  isAdmin: user.isAdmin,
+                  createdAt: user.createdAt,
+                };
+              }
+            } catch (err) {
+              ctx.logger.error(
+                { err, did: user.did },
+                'Failed to fetch handle for user'
+              );
+            }
+            return {
+              did: user.did,
+              handle: null,
+              firstLoginAt: user.firstLoginAt,
+              lastActivityAt: user.lastActivityAt,
+              isAdmin: user.isAdmin,
+              createdAt: user.createdAt,
+            };
+          })
+        );
+
         res.json({
           totalUsers,
-          users: users.map((user) => ({
-            did: user.did,
-            firstLoginAt: user.firstLoginAt,
-            lastActivityAt: user.lastActivityAt,
-            isAdmin: user.isAdmin,
-            createdAt: user.createdAt,
-          })),
+          users: usersWithHandles,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch admin users data');

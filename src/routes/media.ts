@@ -59,7 +59,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { query, mediaType } = req.body;
+      const { query, mediaType, limit = 10, offset = 0 } = req.body;
 
       if (!query || !mediaType) {
         return res
@@ -74,23 +74,34 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        // Search OpenLibrary
-        const results = await searchBooks(query);
+        // Search OpenLibrary with pagination
+        const searchResponse = await searchBooks(query, limit, offset);
 
         // For each result, check if it exists in our database
         const enrichedResults = (
           await Promise.all(
-            results.map(async (result) => {
+            searchResponse.results.map(async (result) => {
               const isbn = extractISBN(result);
-              if (!isbn) return null;
+              const author = result.author_name?.[0] || null;
               let dbItem = null;
 
-              // Check database if we have an ISBN
+              // Check database - first by ISBN if available
               if (isbn) {
                 dbItem = await ctx.db
                   .selectFrom('media_items')
                   .selectAll()
                   .where('isbn', '=', isbn)
+                  .where('mediaType', '=', 'book')
+                  .executeTakeFirst();
+              }
+
+              // If no ISBN or no match found, try matching by title and creator
+              if (!dbItem && result.title && author) {
+                dbItem = await ctx.db
+                  .selectFrom('media_items')
+                  .selectAll()
+                  .where('title', '=', result.title)
+                  .where('creator', '=', author)
                   .where('mediaType', '=', 'book')
                   .executeTakeFirst();
               }
@@ -117,6 +128,7 @@ export const createRouter = (ctx: AppContext) => {
 
         res.json({
           results: enrichedResults,
+          total: searchResponse.total,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to search media');
@@ -146,13 +158,26 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        // Check if item already exists (by ISBN for books)
+        // Check if item already exists
         let existingItem = null;
+
+        // First try by ISBN if available (for books)
         if (isbn && mediaType === 'book') {
           existingItem = await ctx.db
             .selectFrom('media_items')
             .selectAll()
             .where('isbn', '=', isbn)
+            .where('mediaType', '=', mediaType)
+            .executeTakeFirst();
+        }
+
+        // If no ISBN or no match, try by title and creator (requires both)
+        if (!existingItem && title && creator) {
+          existingItem = await ctx.db
+            .selectFrom('media_items')
+            .selectAll()
+            .where('title', '=', title)
+            .where('creator', '=', creator)
             .where('mediaType', '=', mediaType)
             .executeTakeFirst();
         }
@@ -326,6 +351,80 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch reviews');
         res.status(500).json({ error: 'Failed to fetch reviews' });
+      }
+    })
+  );
+
+  // PUT /media/:id - Update media item details (admin only)
+  router.put(
+    '/:id',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await ctx.db
+        .selectFrom('users')
+        .selectAll()
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { id } = req.params;
+      const { title, creator, coverImage, description, publishedYear } =
+        req.body;
+
+      try {
+        // Build update object with only provided fields
+        const updateData: any = {
+          updatedAt: new Date(),
+        };
+
+        if (title !== undefined) updateData.title = title;
+        if (creator !== undefined) updateData.creator = creator || null;
+        if (coverImage !== undefined)
+          updateData.coverImage = coverImage || null;
+        if (description !== undefined)
+          updateData.description = description || null;
+        if (publishedYear !== undefined)
+          updateData.publishedYear = publishedYear || null;
+
+        // Update the media item
+        const updatedItem = await ctx.db
+          .updateTable('media_items')
+          .set(updateData)
+          .where('id', '=', parseInt(id))
+          .returningAll()
+          .executeTakeFirst();
+
+        if (!updatedItem) {
+          return res.status(404).json({ error: 'Media item not found' });
+        }
+
+        res.json({
+          success: true,
+          mediaItem: {
+            id: updatedItem.id,
+            mediaType: updatedItem.mediaType,
+            title: updatedItem.title,
+            creator: updatedItem.creator,
+            isbn: updatedItem.isbn,
+            coverImage: updatedItem.coverImage,
+            description: updatedItem.description,
+            publishedYear: updatedItem.publishedYear,
+            updatedAt: updatedItem.updatedAt,
+          },
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to update media item');
+        res.status(500).json({ error: 'Failed to update media item' });
       }
     })
   );
