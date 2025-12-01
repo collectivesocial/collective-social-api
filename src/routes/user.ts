@@ -55,16 +55,48 @@ export const createRouter = (ctx: AppContext) => {
 
   // GET /users/:handle - Get a user by handle
   router.get('/:handle', async (req: Request, res: Response) => {
+    const agent = await getSessionAgent(req, res, ctx);
+    if (!agent) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
     try {
-      const user = await getUserByHandle(req.params.handle);
-      if (user) {
-        res.json(user);
-      } else {
-        res.status(404).json({ error: 'User not found' });
-      }
+      const profile = await agent.getProfile({ actor: req.params.handle });
+
+      // Get collection count
+      const collectionsResponse = await agent.api.com.atproto.repo.listRecords({
+        repo: profile.data.did,
+        collection: 'app.collectivesocial.feed.list',
+      });
+      const collectionCount = collectionsResponse.data.records.length;
+
+      // Get review count
+      const user = await ctx.db
+        .selectFrom('users')
+        .where('did', '=', profile.data.did)
+        .executeTakeFirst();
+
+      // Get review count
+      const reviewCount = await ctx.db
+        .selectFrom('reviews')
+        .select(({ fn }) => [fn.countAll().as('count')])
+        .where('authorDid', '=', profile.data.did)
+        .executeTakeFirst();
+
+      res.json({
+        did: profile.data.did,
+        handle: profile.data.handle,
+        displayName: profile.data.displayName,
+        avatar: profile.data.avatar,
+        description: profile.data.description,
+        followerCount: profile.data.followersCount,
+        collectionCount,
+        reviewCount: Number(reviewCount?.count || 0),
+        isInDatabase: user ? true : false,
+      });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: 'Internal Server Error' });
+      ctx.logger.error({ err }, 'Failed to fetch profile');
+      res.status(500).json({ error: 'Failed to fetch profile' });
     }
   });
 
