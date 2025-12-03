@@ -20,6 +20,9 @@ export interface OpenLibrarySearchResult {
   isbn?: string[];
   cover_i?: number;
   publisher?: string[];
+  isbn_13?: string[];
+  isbn_10?: string[];
+  number_of_pages?: number;
 }
 
 export interface OpenLibraryBook {

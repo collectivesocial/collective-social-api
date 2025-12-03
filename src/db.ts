@@ -538,6 +538,19 @@ migrations['013'] = {
   },
 };
 
+migrations['014'] = {
+  async up(db: Kysely<unknown>) {
+    // Add length column for tracking pages/minutes/episodes
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('length', 'integer', (col) => col)
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('media_items').dropColumn('length').execute();
+  },
+};
+
 // APIs
 
 export const createDb = (location: string): Database => {

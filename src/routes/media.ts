@@ -119,6 +119,7 @@ export const createRouter = (ctx: AppContext) => {
                 coverImage: result.cover_i
                   ? getCoverUrl(result.cover_i, 'M')
                   : null,
+                pages: result.number_of_pages || null,
                 // Include database info if exists
                 inDatabase: !!dbItem,
                 totalReviews: dbItem?.totalReviews || 0,
@@ -234,8 +235,16 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { title, creator, mediaType, isbn, coverImage, publishYear, url } =
-        req.body;
+      const {
+        title,
+        creator,
+        mediaType,
+        isbn,
+        coverImage,
+        publishYear,
+        url,
+        length,
+      } = req.body;
 
       if (!title || !mediaType) {
         return res
@@ -287,10 +296,15 @@ export const createRouter = (ctx: AppContext) => {
 
         // Fetch additional details from OpenLibrary if we have ISBN
         let description = null;
+        let pageCount = length;
         if (isbn && mediaType === 'book') {
           const bookDetails = await getBookByISBN(isbn);
           if (bookDetails) {
             description = extractDescription(bookDetails);
+            // Use book details page count if not provided
+            if (!pageCount && bookDetails.number_of_pages) {
+              pageCount = bookDetails.number_of_pages;
+            }
           }
         }
 
@@ -306,6 +320,7 @@ export const createRouter = (ctx: AppContext) => {
             coverImage: coverImage || undefined,
             description: description || undefined,
             publishedYear: publishYear || undefined,
+            length: pageCount || undefined,
             totalReviews: 0,
             averageRating: undefined,
             createdAt: new Date(),
@@ -351,6 +366,7 @@ export const createRouter = (ctx: AppContext) => {
           coverImage: item.coverImage,
           description: item.description,
           publishedYear: item.publishedYear,
+          length: item.length,
           totalRatings: item.totalRatings,
           totalReviews: item.totalReviews,
           totalSaves: item.totalSaves,

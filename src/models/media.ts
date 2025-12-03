@@ -19,6 +19,7 @@ export interface MediaItem {
   coverImage?: string;
   description?: string;
   publishedYear?: number;
+  length?: number; // Pages for books, minutes for movies/videos, episodes for TV
   totalRatings: number;
   totalReviews: number;
   totalSaves: number;
