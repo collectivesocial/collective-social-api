@@ -491,7 +491,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const { id } = req.params;
-      const { title, creator, coverImage, description, publishedYear } =
+      const { title, creator, coverImage, description, publishedYear, length } =
         req.body;
 
       try {
@@ -508,6 +508,7 @@ export const createRouter = (ctx: AppContext) => {
           updateData.description = description || null;
         if (publishedYear !== undefined)
           updateData.publishedYear = publishedYear || null;
+        if (length !== undefined) updateData.length = length || null;
 
         // Update the media item
         const updatedItem = await ctx.db
@@ -532,6 +533,7 @@ export const createRouter = (ctx: AppContext) => {
             coverImage: updatedItem.coverImage,
             description: updatedItem.description,
             publishedYear: updatedItem.publishedYear,
+            length: updatedItem.length,
             updatedAt: updatedItem.updatedAt,
           },
         });
