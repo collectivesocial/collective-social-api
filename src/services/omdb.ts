@@ -33,6 +33,22 @@ interface OMDBDetailResponse {
   imdbRating: string;
   imdbID: string;
   Type: string;
+  totalSeasons?: string; // Only for TV series
+  Response: string;
+  Error?: string;
+}
+
+interface OMDBSeasonResponse {
+  Title: string;
+  Season: string;
+  totalSeasons: string;
+  Episodes: Array<{
+    Title: string;
+    Released: string;
+    Episode: string;
+    imdbRating: string;
+    imdbID: string;
+  }>;
   Response: string;
   Error?: string;
 }
@@ -117,4 +133,42 @@ export function extractRuntime(runtime: string): number | null {
 
   const match = runtime.match(/(\d+)/);
   return match ? parseInt(match[1]) : null;
+}
+
+/**
+ * Get total episode count for a TV series by fetching all seasons
+ */
+export async function getTotalEpisodes(imdbId: string): Promise<number | null> {
+  if (!config.omdbApiKey) {
+    throw new Error('OMDB API key not configured');
+  }
+
+  try {
+    // First get series details to find total seasons
+    const details = await getOMDBDetails(imdbId);
+    if (!details || details.Type !== 'series' || !details.totalSeasons) {
+      return null;
+    }
+
+    const totalSeasons = parseInt(details.totalSeasons);
+    if (isNaN(totalSeasons)) return null;
+
+    let totalEpisodes = 0;
+
+    // Fetch each season to count episodes
+    for (let season = 1; season <= totalSeasons; season++) {
+      const url = `http://www.omdbapi.com/?apikey=${config.omdbApiKey}&i=${imdbId}&Season=${season}`;
+      const response = await fetch(url);
+      const data = (await response.json()) as OMDBSeasonResponse;
+
+      if (data.Response === 'True' && data.Episodes) {
+        totalEpisodes += data.Episodes.length;
+      }
+    }
+
+    return totalEpisodes > 0 ? totalEpisodes : null;
+  } catch (err) {
+    console.error('Failed to get total episodes:', err);
+    return null;
+  }
 }

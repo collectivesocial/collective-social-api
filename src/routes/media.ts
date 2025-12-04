@@ -438,7 +438,8 @@ export const createRouter = (ctx: AppContext) => {
 
         // Fetch additional details from OMDB if we have IMDB ID
         if (imdbId && (mediaType === 'movie' || mediaType === 'tv')) {
-          const { getOMDBDetails } = await import('../services/omdb');
+          const { getOMDBDetails, getTotalEpisodes } =
+            await import('../services/omdb');
           const details = await getOMDBDetails(imdbId);
           if (details) {
             description = details.Plot !== 'N/A' ? details.Plot : null;
@@ -449,9 +450,13 @@ export const createRouter = (ctx: AppContext) => {
             finalPublishYear = details.Year
               ? parseInt(details.Year)
               : publishYear;
-            // Extract runtime in minutes
-            if (!runtime && details.Runtime) {
+            // Extract runtime in minutes for movies
+            if (mediaType === 'movie' && !runtime && details.Runtime) {
               runtime = extractRuntime(details.Runtime);
+            }
+            // Get total episodes for TV series
+            if (mediaType === 'tv' && !runtime) {
+              runtime = await getTotalEpisodes(imdbId);
             }
           }
         }
