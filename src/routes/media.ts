@@ -54,6 +54,54 @@ async function getSessionAgent(
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
 
+  // GET /media/recent - Get recently added media items
+  router.get(
+    '/recent',
+    handler(async (req: Request, res: Response) => {
+      const { limit = 6 } = req.query;
+
+      try {
+        const items = await ctx.db
+          .selectFrom('media_items')
+          .select([
+            'id',
+            'mediaType',
+            'title',
+            'creator',
+            'coverImage',
+            'publishedYear',
+            'averageRating',
+            'totalReviews',
+            'totalRatings',
+            'createdAt',
+          ])
+          .orderBy('createdAt', 'desc')
+          .limit(parseInt(limit as string))
+          .execute();
+
+        res.json({
+          items: items.map((item) => ({
+            id: item.id,
+            mediaType: item.mediaType,
+            title: item.title,
+            creator: item.creator,
+            coverImage: item.coverImage,
+            publishedYear: item.publishedYear,
+            averageRating: item.averageRating
+              ? parseFloat(item.averageRating.toString())
+              : null,
+            totalReviews: item.totalReviews,
+            totalRatings: item.totalRatings,
+            createdAt: item.createdAt,
+          })),
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch recent media items');
+        res.status(500).json({ error: 'Failed to fetch recent media items' });
+      }
+    })
+  );
+
   // POST /media/search - Search for media items (books, etc.)
   router.post(
     '/search',
