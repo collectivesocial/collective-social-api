@@ -268,10 +268,15 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(400).json({ error: 'URL is required' });
       }
 
-      if (mediaType && mediaType !== 'article' && mediaType !== 'video') {
+      if (
+        mediaType &&
+        mediaType !== 'article' &&
+        mediaType !== 'video' &&
+        mediaType !== 'course'
+      ) {
         return res
           .status(400)
-          .json({ error: 'Media type must be article or video' });
+          .json({ error: 'Media type must be article, video, or course' });
       }
 
       // Normalize URL (remove query params)
@@ -365,8 +370,13 @@ export const createRouter = (ctx: AppContext) => {
         // Check if item already exists
         let existingItem = null;
 
-        // First try by URL if available (for articles and videos)
-        if (url && (mediaType === 'article' || mediaType === 'video')) {
+        // First try by URL if available (for articles, videos, and courses)
+        if (
+          url &&
+          (mediaType === 'article' ||
+            mediaType === 'video' ||
+            mediaType === 'course')
+        ) {
           existingItem = await ctx.db
             .selectFrom('media_items')
             .selectAll()
