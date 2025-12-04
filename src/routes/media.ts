@@ -16,6 +16,7 @@ import {
   fetchUrlMetadata,
   detectMediaTypeFromUrl,
 } from '../services/urlMetadata';
+import { searchOMDB, extractRuntime } from '../services/omdb';
 
 type Session = { did?: string };
 
@@ -72,69 +73,128 @@ export const createRouter = (ctx: AppContext) => {
           .json({ error: 'Query and mediaType are required' });
       }
 
-      if (mediaType !== 'book') {
-        return res
-          .status(400)
-          .json({ error: 'Only books are currently supported' });
-      }
-
       try {
-        // Search OpenLibrary with pagination
-        const searchResponse = await searchBooks(query, limit, offset);
+        let enrichedResults: any[] = [];
+        let total = 0;
 
-        // For each result, check if it exists in our database
-        const enrichedResults = (
-          await Promise.all(
+        // Handle different media types
+        if (mediaType === 'book') {
+          // Search OpenLibrary with pagination
+          const searchResponse = await searchBooks(query, limit, offset);
+
+          // For each result, check if it exists in our database
+          enrichedResults = (
+            await Promise.all(
+              searchResponse.results.map(async (result) => {
+                const isbn = extractISBN(result);
+                const author = result.author_name?.[0] || null;
+                let dbItem = null;
+
+                // Check database - first by ISBN if available
+                if (isbn) {
+                  dbItem = await ctx.db
+                    .selectFrom('media_items')
+                    .selectAll()
+                    .where('isbn', '=', isbn)
+                    .where('mediaType', '=', 'book')
+                    .executeTakeFirst();
+                }
+
+                // If no ISBN or no match found, try matching by title and creator
+                if (!dbItem && result.title && author) {
+                  dbItem = await ctx.db
+                    .selectFrom('media_items')
+                    .selectAll()
+                    .where('title', '=', result.title)
+                    .where('creator', '=', author)
+                    .where('mediaType', '=', 'book')
+                    .executeTakeFirst();
+                }
+
+                return {
+                  title: result.title,
+                  author: result.author_name?.[0] || null,
+                  publishYear: result.first_publish_year || null,
+                  isbn: isbn || null,
+                  coverImage: result.cover_i
+                    ? getCoverUrl(result.cover_i, 'M')
+                    : null,
+                  pages: result.number_of_pages || null,
+                  // Include database info if exists
+                  inDatabase: !!dbItem,
+                  totalReviews: dbItem?.totalReviews || 0,
+                  totalRatings: dbItem?.totalRatings || 0,
+                  averageRating: dbItem?.averageRating
+                    ? parseFloat(dbItem.averageRating.toString())
+                    : null,
+                  mediaItemId: dbItem?.id || null,
+                };
+              })
+            )
+          ).filter((item): item is NonNullable<typeof item> => item !== null);
+
+          total = searchResponse.total;
+        } else if (mediaType === 'movie' || mediaType === 'tv') {
+          // Search OMDB
+          const omdbType = mediaType === 'movie' ? 'movie' : 'series';
+          const searchResponse = await searchOMDB(query, omdbType, limit);
+
+          // For each result, check if it exists in our database
+          enrichedResults = await Promise.all(
             searchResponse.results.map(async (result) => {
-              const isbn = extractISBN(result);
-              const author = result.author_name?.[0] || null;
               let dbItem = null;
 
-              // Check database - first by ISBN if available
-              if (isbn) {
+              // Check database by externalId (IMDB ID)
+              if (result.imdbId) {
                 dbItem = await ctx.db
                   .selectFrom('media_items')
                   .selectAll()
-                  .where('isbn', '=', isbn)
-                  .where('mediaType', '=', 'book')
+                  .where('externalId', '=', result.imdbId)
+                  .where('mediaType', '=', mediaType)
                   .executeTakeFirst();
               }
 
-              // If no ISBN or no match found, try matching by title and creator
-              if (!dbItem && result.title && author) {
+              // If no match found, try matching by title and year
+              if (!dbItem && result.title && result.year) {
                 dbItem = await ctx.db
                   .selectFrom('media_items')
                   .selectAll()
                   .where('title', '=', result.title)
-                  .where('creator', '=', author)
-                  .where('mediaType', '=', 'book')
+                  .where('publishedYear', '=', result.year)
+                  .where('mediaType', '=', mediaType)
                   .executeTakeFirst();
               }
 
               return {
                 title: result.title,
-                author: result.author_name?.[0] || null,
-                publishYear: result.first_publish_year || null,
-                isbn: isbn || null,
-                coverImage: result.cover_i
-                  ? getCoverUrl(result.cover_i, 'M')
-                  : null,
-                pages: result.number_of_pages || null,
+                author: result.director,
+                publishYear: result.year,
+                isbn: null,
+                coverImage: result.coverImage,
+                pages: null,
+                imdbId: result.imdbId,
                 // Include database info if exists
                 inDatabase: !!dbItem,
                 totalReviews: dbItem?.totalReviews || 0,
+                totalRatings: dbItem?.totalRatings || 0,
                 averageRating: dbItem?.averageRating
                   ? parseFloat(dbItem.averageRating.toString())
                   : null,
                 mediaItemId: dbItem?.id || null,
               };
             })
-          )
-        ).filter((item): item is NonNullable<typeof item> => item !== null);
+          );
+
+          total = searchResponse.total;
+        } else {
+          return res
+            .status(400)
+            .json({ error: 'Unsupported media type for search' });
+        }
 
         res.json({
           results: enrichedResults,
-          total: searchResponse.total,
+          total: total,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to search media');
@@ -244,6 +304,7 @@ export const createRouter = (ctx: AppContext) => {
         publishYear,
         url,
         length,
+        imdbId,
       } = req.body;
 
       if (!title || !mediaType) {
@@ -276,6 +337,20 @@ export const createRouter = (ctx: AppContext) => {
             .executeTakeFirst();
         }
 
+        // Try by IMDB ID if available (for movies and TV shows)
+        if (
+          !existingItem &&
+          imdbId &&
+          (mediaType === 'movie' || mediaType === 'tv')
+        ) {
+          existingItem = await ctx.db
+            .selectFrom('media_items')
+            .selectAll()
+            .where('externalId', '=', imdbId)
+            .where('mediaType', '=', mediaType)
+            .executeTakeFirst();
+        }
+
         // If no ISBN/URL or no match, try by title and creator (requires both)
         if (!existingItem && title && creator) {
           existingItem = await ctx.db
@@ -297,6 +372,11 @@ export const createRouter = (ctx: AppContext) => {
         // Fetch additional details from OpenLibrary if we have ISBN
         let description = null;
         let pageCount = length;
+        let runtime = length;
+        let finalCreator = creator;
+        let finalCoverImage = coverImage;
+        let finalPublishYear = publishYear;
+
         if (isbn && mediaType === 'book') {
           const bookDetails = await getBookByISBN(isbn);
           if (bookDetails) {
@@ -308,19 +388,40 @@ export const createRouter = (ctx: AppContext) => {
           }
         }
 
+        // Fetch additional details from OMDB if we have IMDB ID
+        if (imdbId && (mediaType === 'movie' || mediaType === 'tv')) {
+          const { getOMDBDetails } = await import('../services/omdb');
+          const details = await getOMDBDetails(imdbId);
+          if (details) {
+            description = details.Plot !== 'N/A' ? details.Plot : null;
+            finalCreator =
+              details.Director !== 'N/A' ? details.Director : creator;
+            finalCoverImage =
+              details.Poster !== 'N/A' ? details.Poster : coverImage;
+            finalPublishYear = details.Year
+              ? parseInt(details.Year)
+              : publishYear;
+            // Extract runtime in minutes
+            if (!runtime && details.Runtime) {
+              runtime = extractRuntime(details.Runtime);
+            }
+          }
+        }
+
         // Insert new media item
         const result = await ctx.db
           .insertInto('media_items')
           .values({
             mediaType,
             title,
-            creator: creator || undefined,
+            creator: finalCreator || undefined,
             isbn: isbn || undefined,
+            externalId: imdbId || undefined,
             url: url || undefined,
-            coverImage: coverImage || undefined,
+            coverImage: finalCoverImage || undefined,
             description: description || undefined,
-            publishedYear: publishYear || undefined,
-            length: pageCount || undefined,
+            publishedYear: finalPublishYear || undefined,
+            length: (mediaType === 'book' ? pageCount : runtime) || undefined,
             totalReviews: 0,
             averageRating: undefined,
             createdAt: new Date(),
