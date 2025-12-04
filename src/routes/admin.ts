@@ -147,6 +147,10 @@ export const createRouter = (ctx: AppContext) => {
         return;
       }
 
+      const page = parseInt((req.query.page as string) || '1');
+      const limit = parseInt((req.query.limit as string) || '20');
+      const offset = (page - 1) * limit;
+
       try {
         // Get total count
         const countResult = await ctx.db
@@ -156,7 +160,7 @@ export const createRouter = (ctx: AppContext) => {
 
         const totalMediaItems = Number(countResult?.count || 0);
 
-        // Get first 10 media items
+        // Get paginated media items
         const mediaItems = await ctx.db
           .selectFrom('media_items')
           .select([
@@ -172,7 +176,8 @@ export const createRouter = (ctx: AppContext) => {
             'createdAt',
           ])
           .orderBy('createdAt', 'desc')
-          .limit(10)
+          .limit(limit)
+          .offset(offset)
           .execute();
 
         res.json({

@@ -693,5 +693,52 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // DELETE /media/:id - Delete media item (admin only)
+  router.delete(
+    '/:id',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await ctx.db
+        .selectFrom('users')
+        .selectAll()
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { id } = req.params;
+
+      try {
+        // Delete the media item
+        const deletedItem = await ctx.db
+          .deleteFrom('media_items')
+          .where('id', '=', parseInt(id))
+          .returningAll()
+          .executeTakeFirst();
+
+        if (!deletedItem) {
+          return res.status(404).json({ error: 'Media item not found' });
+        }
+
+        res.json({
+          success: true,
+          message: 'Media item deleted successfully',
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete media item');
+        res.status(500).json({ error: 'Failed to delete media item' });
+      }
+    })
+  );
+
   return router;
 };
