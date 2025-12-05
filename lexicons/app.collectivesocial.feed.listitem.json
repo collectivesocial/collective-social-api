@@ -58,6 +58,10 @@
             "maxGraphemes": 300,
             "maxLength": 3000
           },
+          "order": {
+            "type": "integer",
+            "description": "Display order within the list. Higher numbers appear first (top). 0 appears at bottom."
+          },
           "recommendations": {
             "type": "array",
             "description": "List of users who recommended this item and when they suggested it.",

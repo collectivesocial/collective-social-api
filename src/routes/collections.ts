@@ -330,6 +330,8 @@ export const createRouter = (ctx: AppContext) => {
                 title: record.value.title,
                 creator: record.value.creator || null,
                 description: record.value.description || null,
+                order:
+                  record.value.order !== undefined ? record.value.order : 0,
                 mediaType: record.value.mediaType || null,
                 mediaItemId: record.value.mediaItemId || null,
                 status: record.value.status || null,
@@ -369,6 +371,9 @@ export const createRouter = (ctx: AppContext) => {
               return item;
             })
         );
+
+        // Sort by order (descending - higher numbers first)
+        items.sort((a, b) => (b.order || 0) - (a.order || 0));
 
         res.json({ items });
       } catch (err) {
@@ -793,6 +798,14 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Item doesn't exist, create new one
+        // Calculate the highest order in the current list and add 1
+        const existingItems = existingItemsResponse.data.records
+          .filter((record: any) => record.value.list === listUri)
+          .map((record: any) => record.value.order || 0);
+        const maxOrder =
+          existingItems.length > 0 ? Math.max(...existingItems) : 0;
+        const newOrder = maxOrder + 1;
+
         const now = new Date();
         const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
           $type: 'app.collectivesocial.feed.listitem',
@@ -800,6 +813,7 @@ export const createRouter = (ctx: AppContext) => {
           title,
           creator: creator || undefined,
           description: description || undefined,
+          order: newOrder,
           mediaItemId: mediaItemId || undefined,
           mediaType: mediaType || undefined,
           status: status || undefined,
@@ -1232,6 +1246,74 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to update item');
         res.status(500).json({ error: 'Failed to update item' });
+      }
+    })
+  );
+
+  // PUT /collections/:listUri/reorder - Update order of multiple items
+  router.put(
+    '/:listUri/reorder',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { items } = req.body; // Array of { uri, order }
+
+      if (!Array.isArray(items)) {
+        return res.status(400).json({ error: 'Items must be an array' });
+      }
+
+      try {
+        const listUri = decodeURIComponent(req.params.listUri);
+
+        // Verify ownership
+        const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
+        if (!listDidMatch || listDidMatch[1] !== agent.did) {
+          return res
+            .status(403)
+            .json({ error: 'Not authorized to reorder this list' });
+        }
+
+        // Get all items to update
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+        });
+
+        // Update each item's order
+        for (const itemUpdate of items) {
+          const itemRecord = itemsResponse.data.records.find(
+            (record: any) => record.uri === itemUpdate.uri
+          );
+
+          if (!itemRecord) continue;
+
+          // Extract rkey
+          const rkeyMatch = itemUpdate.uri.match(/\/([^\/]+)$/);
+          if (!rkeyMatch) continue;
+          const rkey = rkeyMatch[1];
+
+          const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
+            ...(itemRecord.value as any),
+            order: itemUpdate.order,
+          };
+
+          await agent.api.com.atproto.repo.putRecord({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.listitem',
+            rkey: rkey,
+            record: updatedRecord as any,
+          });
+        }
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to reorder items');
+        res.status(500).json({ error: 'Failed to reorder items' });
       }
     })
   );

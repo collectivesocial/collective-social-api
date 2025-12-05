@@ -32,6 +32,7 @@ export namespace AppCollectiveSocialFeedListitem {
     title: string;
     creator?: string;
     description?: string;
+    order?: number; // Display order - higher numbers appear first
     mediaItemId?: number; // Reference to media_items table
     mediaType?:
       | 'book'
