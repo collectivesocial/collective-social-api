@@ -3,6 +3,7 @@ export type List = {
   authorDid: string;
   name: string;
   description: string | null;
+  parentListUri: string | null;
   isPublic: boolean;
   createdAt: string;
   indexedAt: string;

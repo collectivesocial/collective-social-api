@@ -8,6 +8,7 @@ export namespace AppCollectiveSocialFeedList {
     $type?: 'app.collectivesocial.feed.list';
     name: string;
     description?: string;
+    parentListUri?: string;
     visibility?: 'public' | 'private';
     isDefault?: boolean;
     purpose: string;
@@ -30,6 +31,7 @@ export namespace AppCollectiveSocialFeedListitem {
     list: string; // AT-URI of the list
     title: string;
     creator?: string;
+    description?: string;
     mediaItemId?: number; // Reference to media_items table
     mediaType?:
       | 'book'
@@ -38,7 +40,8 @@ export namespace AppCollectiveSocialFeedListitem {
       | 'podcast'
       | 'article'
       | 'game'
-      | 'music';
+      | 'music'
+      | 'course';
     status?: 'want' | 'in-progress' | 'completed';
     recommendations?: Recommendation[];
     completedAt?: string; // Timestamp when completed

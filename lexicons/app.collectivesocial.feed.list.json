@@ -32,6 +32,11 @@
             "description": "Whether this is the default inbox list. Only one per user, cannot be deleted.",
             "default": false
           },
+          "parentListUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference to a parent list for nested/sub-collections."
+          },
           "avatar": {
             "type": "blob",
             "description": "Optional avatar image for the collection.",

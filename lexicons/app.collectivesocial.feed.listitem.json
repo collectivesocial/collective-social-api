@@ -33,7 +33,7 @@
           },
           "mediaType": {
             "type": "string",
-            "description": "Type of media: book, movie, tv, podcast, article, game, music, etc.",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, etc.",
             "knownValues": [
               "book",
               "movie",
@@ -41,7 +41,8 @@
               "podcast",
               "article",
               "game",
-              "music"
+              "music",
+              "course"
             ],
             "maxLength": 64
           },
@@ -50,6 +51,12 @@
             "description": "Consumption status: want, in-progress, completed.",
             "knownValues": ["want", "in-progress", "completed"],
             "maxLength": 32
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional personal notes or description for this list item.",
+            "maxGraphemes": 300,
+            "maxLength": 3000
           },
           "recommendations": {
             "type": "array",

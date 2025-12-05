@@ -56,6 +56,7 @@ export const createRouter = (ctx: AppContext) => {
             cid: record.cid,
             name: record.value.name,
             description: record.value.description || null,
+            parentListUri: record.value.parentListUri || null,
             visibility: record.value.visibility || 'public',
             isDefault: record.value.isDefault || false,
             purpose: record.value.purpose,
@@ -82,7 +83,8 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { name, description, purpose, visibility } = req.body;
+      const { name, description, purpose, visibility, parentListUri } =
+        req.body;
 
       if (!name) {
         return res.status(400).json({ error: 'Name is required' });
@@ -106,6 +108,7 @@ export const createRouter = (ctx: AppContext) => {
           $type: 'app.collectivesocial.feed.list',
           name,
           description: description || undefined,
+          parentListUri: parentListUri || undefined,
           visibility: visibility || 'public',
           purpose: purpose || 'app.collectivesocial.defs#curatelist',
           isDefault: isDefault || undefined,
@@ -124,6 +127,7 @@ export const createRouter = (ctx: AppContext) => {
           cid: response.data.cid,
           name,
           description: description || null,
+          parentListUri: parentListUri || null,
           visibility: record.visibility,
           purpose: record.purpose,
           isDefault: record.isDefault || false,
@@ -325,6 +329,7 @@ export const createRouter = (ctx: AppContext) => {
                 cid: record.cid,
                 title: record.value.title,
                 creator: record.value.creator || null,
+                description: record.value.description || null,
                 mediaType: record.value.mediaType || null,
                 mediaItemId: record.value.mediaItemId || null,
                 status: record.value.status || null,
@@ -390,6 +395,7 @@ export const createRouter = (ctx: AppContext) => {
         status,
         review,
         notes,
+        description,
         mediaType,
         creator,
         mediaItemId,
@@ -498,6 +504,10 @@ export const createRouter = (ctx: AppContext) => {
             // Update fields if new values provided, otherwise keep existing
             status: status || existingData.status,
             creator: creator || existingData.creator,
+            description:
+              description !== undefined
+                ? description || undefined
+                : existingData.description,
             completedAt: completedAtValue,
             recommendations:
               mergedRecommendations.length > 0
@@ -789,6 +799,7 @@ export const createRouter = (ctx: AppContext) => {
           list: listUri,
           title,
           creator: creator || undefined,
+          description: description || undefined,
           mediaItemId: mediaItemId || undefined,
           mediaType: mediaType || undefined,
           status: status || undefined,
@@ -1399,6 +1410,7 @@ export const createRouter = (ctx: AppContext) => {
             cid: record.cid,
             name: record.value.name,
             description: record.value.description || null,
+            parentListUri: record.value.parentListUri || null,
             visibility: record.value.visibility || 'public',
             isDefault: record.value.isDefault || false,
             purpose: record.value.purpose,
