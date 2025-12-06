@@ -1525,5 +1525,104 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // GET /collections/public/:did/in-progress - Get in-progress items from public collections
+  router.get(
+    '/public/:did/in-progress',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'public, max-age=60');
+
+      const { did } = req.params;
+
+      // Try to get authenticated agent, otherwise create unauthenticated one
+      let queryAgent = await getSessionAgent(req, res, ctx);
+      if (!queryAgent) {
+        // Create an unauthenticated agent for public queries
+        queryAgent = new Agent({ service: 'https://bsky.social' });
+      }
+
+      try {
+        // Get all public collections for this user
+        const collectionsResponse =
+          await queryAgent.api.com.atproto.repo.listRecords({
+            repo: did,
+            collection: 'app.collectivesocial.feed.list',
+          });
+
+        // Filter to only public collections
+        const publicCollectionUris = collectionsResponse.data.records
+          .filter((record: any) => {
+            const visibility = record.value.visibility || 'public';
+            return visibility === 'public';
+          })
+          .map((record: any) => record.uri);
+
+        // Get all list items for this user
+        const itemsResponse = await queryAgent.api.com.atproto.repo.listRecords(
+          {
+            repo: did,
+            collection: 'app.collectivesocial.feed.listitem',
+          }
+        );
+
+        // Filter to in-progress items from public collections
+        const inProgressItems = itemsResponse.data.records
+          .filter((record: any) => {
+            const listUri = record.value.list;
+            const status = record.value.status;
+            return (
+              publicCollectionUris.includes(listUri) && status === 'in-progress'
+            );
+          })
+          .map((record: any) => ({
+            uri: record.uri,
+            cid: record.cid,
+            title: record.value.title,
+            creator: record.value.creator || null,
+            mediaType: record.value.mediaType,
+            mediaItemId: record.value.mediaItemId || null,
+            status: record.value.status,
+            rating: record.value.rating || null,
+            review: record.value.review || null,
+            notes: record.value.notes || null,
+            completedAt: record.value.completedAt || null,
+            createdAt: record.value.createdAt,
+            listUri: record.value.list,
+          }));
+
+        // Fetch media items data for items that have mediaItemId
+        const mediaItemIds = inProgressItems
+          .filter((item) => item.mediaItemId)
+          .map((item) => item.mediaItemId);
+
+        const mediaItems =
+          mediaItemIds.length > 0
+            ? await ctx.db
+                .selectFrom('media_items')
+                .selectAll()
+                .where('id', 'in', mediaItemIds)
+                .execute()
+            : [];
+
+        // Create a map for quick lookup
+        const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
+
+        // Attach media item data to list items
+        const itemsWithMediaData = inProgressItems.map((item) => ({
+          ...item,
+          mediaItem: item.mediaItemId
+            ? mediaItemMap.get(item.mediaItemId)
+            : undefined,
+        }));
+
+        res.json({
+          items: itemsWithMediaData,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to fetch in-progress items');
+        res.status(500).json({ error: 'Failed to fetch in-progress items' });
+      }
+    })
+  );
+
   return router;
 };
