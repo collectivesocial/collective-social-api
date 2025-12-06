@@ -59,6 +59,31 @@ export type ShareLink = {
   updatedAt: Date;
 };
 
+export type Tag = {
+  id: Generated<number>;
+  name: string;
+  slug: string;
+  createdAt: Date;
+  status: string;
+};
+
+export type MediaItemTag = {
+  mediaItemId: number;
+  tagId: number;
+  userDid: string;
+  createdAt: Date;
+};
+
+export type TagReport = {
+  id: Generated<number>;
+  itemId: number;
+  tagId: number;
+  reporterDid: string;
+  reason: string;
+  createdAt: Date;
+  status: string;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -68,6 +93,9 @@ export type DatabaseSchema = {
   feedback: Feedback;
   feed_events: FeedEvent;
   share_links: ShareLink;
+  tags: Tag;
+  media_item_tags: MediaItemTag;
+  tag_reports: TagReport;
 };
 
 // Migrations
@@ -548,6 +576,121 @@ migrations['014'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.alterTable('media_items').dropColumn('length').execute();
+  },
+};
+
+migrations['015'] = {
+  async up(db: Kysely<unknown>) {
+    // Create tags table
+    await db.schema
+      .createTable('tags')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('name', 'varchar(255)', (col) => col.notNull())
+      .addColumn('slug', 'varchar(255)', (col) => col.notNull().unique())
+      .addColumn('created_at', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addColumn('status', 'varchar(50)', (col) =>
+        col.notNull().defaultTo('active')
+      )
+      .execute();
+
+    // Create index on slug for faster lookups
+    await db.schema
+      .createIndex('tags_slug_idx')
+      .on('tags')
+      .column('slug')
+      .execute();
+
+    // Create index on status for filtering
+    await db.schema
+      .createIndex('tags_status_idx')
+      .on('tags')
+      .column('status')
+      .execute();
+
+    // Create media_item_tags junction table
+    await db.schema
+      .createTable('media_item_tags')
+      .addColumn('media_item_id', 'integer', (col) =>
+        col.notNull().references('media_items.id').onDelete('cascade')
+      )
+      .addColumn('tag_id', 'integer', (col) =>
+        col.notNull().references('tags.id').onDelete('cascade')
+      )
+      .addColumn('user_did', 'varchar(255)', (col) => col.notNull())
+      .addColumn('created_at', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addPrimaryKeyConstraint('media_item_tags_pk', [
+        'media_item_id',
+        'tag_id',
+        'user_did',
+      ])
+      .execute();
+
+    // Create indexes for junction table
+    await db.schema
+      .createIndex('media_item_tags_media_item_idx')
+      .on('media_item_tags')
+      .column('media_item_id')
+      .execute();
+
+    await db.schema
+      .createIndex('media_item_tags_tag_idx')
+      .on('media_item_tags')
+      .column('tag_id')
+      .execute();
+
+    await db.schema
+      .createIndex('media_item_tags_user_idx')
+      .on('media_item_tags')
+      .column('user_did')
+      .execute();
+
+    // Create tag_reports table for moderation
+    await db.schema
+      .createTable('tag_reports')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('item_id', 'integer', (col) =>
+        col.notNull().references('media_items.id').onDelete('cascade')
+      )
+      .addColumn('tag_id', 'integer', (col) =>
+        col.notNull().references('tags.id').onDelete('cascade')
+      )
+      .addColumn('reporter_did', 'varchar(255)', (col) => col.notNull())
+      .addColumn('reason', 'text', (col) => col.notNull())
+      .addColumn('created_at', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addColumn('status', 'varchar(50)', (col) =>
+        col.notNull().defaultTo('pending')
+      )
+      .execute();
+
+    // Create indexes for tag_reports
+    await db.schema
+      .createIndex('tag_reports_status_idx')
+      .on('tag_reports')
+      .column('status')
+      .execute();
+
+    await db.schema
+      .createIndex('tag_reports_tag_idx')
+      .on('tag_reports')
+      .column('tag_id')
+      .execute();
+
+    await db.schema
+      .createIndex('tag_reports_item_idx')
+      .on('tag_reports')
+      .column('item_id')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('tag_reports').execute();
+    await db.schema.dropTable('media_item_tags').execute();
+    await db.schema.dropTable('tags').execute();
   },
 };
 
