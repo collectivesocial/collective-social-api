@@ -1018,7 +1018,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { rating, review, notes } = req.body;
+      const { status, rating, review, notes } = req.body;
 
       try {
         const listUri = decodeURIComponent(req.params.listUri);
@@ -1074,9 +1074,10 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Update the record (rating, review, notes are now handled separately)
+        // Update the record (status can be updated, rating/review/notes handled separately)
         const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
           ...currentData,
+          ...(status !== undefined && { status }),
         };
 
         await agent.api.com.atproto.repo.putRecord({
