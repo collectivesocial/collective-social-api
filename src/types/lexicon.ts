@@ -72,3 +72,25 @@ export namespace AppCollectiveSocialFeedReview {
     updatedAt?: string;
   }
 }
+
+export namespace AppCollectiveSocialFeedReviewsegment {
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.reviewsegment';
+    title?: string;
+    text: string;
+    percentage: number; // 0-100, progress when segment was written
+    mediaItemId?: number; // Reference to media_items table
+    mediaType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
+    listItem?: string; // AT-URI of the associated list item
+    createdAt: string;
+  }
+}

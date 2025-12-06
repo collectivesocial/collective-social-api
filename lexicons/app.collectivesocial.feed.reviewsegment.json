@@ -1,38 +1,32 @@
 {
   "lexicon": 1,
-  "id": "app.collectivesocial.feed.review",
+  "id": "app.collectivesocial.feed.reviewsegment",
   "defs": {
     "main": {
       "type": "record",
-      "description": "A review of a media item in Collective Social.",
+      "description": "A segment or partial review of media in progress, allowing users to share thoughts on specific sections (e.g., chapters, episodes) as they consume the content.",
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["text", "createdAt"],
+        "required": ["text", "percentage", "createdAt"],
         "properties": {
           "title": {
             "type": "string",
-            "description": "Optional title for the review.",
+            "description": "Title for this review segment (e.g., 'Chapter 5 thoughts', 'Episode 3 reactions').",
             "maxGraphemes": 200,
             "maxLength": 2000
           },
           "text": {
             "type": "string",
-            "description": "The review text content.",
+            "description": "The review segment text content - thoughts on this specific section.",
             "maxGraphemes": 3000,
             "maxLength": 30000
           },
-          "rating": {
+          "percentage": {
             "type": "number",
-            "description": "Rating from 0 to 5, supports half-star increments (0.5 steps).",
+            "description": "Percentage of completion when this segment was written (0-100).",
             "minimum": 0,
-            "maximum": 5
-          },
-          "notes": {
-            "type": "string",
-            "description": "Private notes about the media item. Only visible to the owner.",
-            "maxGraphemes": 3000,
-            "maxLength": 30000
+            "maximum": 100
           },
           "mediaItemId": {
             "type": "integer",
@@ -40,13 +34,15 @@
           },
           "mediaType": {
             "type": "string",
-            "description": "Type of media: book, movie, tv, podcast, article, game, music, etc.",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, etc.",
             "knownValues": [
               "book",
               "movie",
               "tv",
               "podcast",
               "article",
+              "game",
+              "music",
               "course",
               "video"
             ],
@@ -55,17 +51,12 @@
           "listItem": {
             "type": "string",
             "format": "at-uri",
-            "description": "Optional reference (AT-URI) to the associated list item."
+            "description": "Optional reference (AT-URI) to the associated list item being reviewed."
           },
           "createdAt": {
             "type": "string",
             "format": "datetime",
-            "description": "Timestamp when this review was created."
-          },
-          "updatedAt": {
-            "type": "string",
-            "format": "datetime",
-            "description": "Timestamp when this review was last updated."
+            "description": "Timestamp when this review segment was created."
           }
         }
       }

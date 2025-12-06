@@ -8,6 +8,7 @@ import { createRouter as createAdminRouter } from './routes/admin';
 import { createRouter as createFeedbackRouter } from './routes/feedback';
 import { createRouter as createFeedRouter } from './routes/feed';
 import { createRouter as createShareRouter } from './routes/share';
+import { createRouter as createReviewSegmentsRouter } from './routes/reviewSegments';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
@@ -53,6 +54,9 @@ createAppContext().then((ctx) => {
 
   // Mount share routes
   app.use('/share', createShareRouter(ctx));
+
+  // Mount review segments routes
+  app.use('/reviewsegments', createReviewSegmentsRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {
