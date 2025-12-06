@@ -24,10 +24,6 @@ export const createRouter = (ctx: AppContext) => {
           req.body;
 
         // Validate required fields
-        if (text === undefined || text === null || text.trim() === '') {
-          return res.status(400).json({ error: 'Text is required' });
-        }
-
         if (percentage === undefined || percentage === null) {
           return res.status(400).json({ error: 'Percentage is required' });
         }
@@ -42,14 +38,14 @@ export const createRouter = (ctx: AppContext) => {
         // Create the review segment record
         const now = new Date().toISOString();
         const record: AppCollectiveSocialFeedReviewsegment.Record = {
-          text: text.trim(),
+          ...(text && text.trim() ? { text: text.trim() } : {}),
           percentage: percentage,
           createdAt: now,
           ...(title && title.trim() ? { title: title.trim() } : {}),
           ...(mediaItemId ? { mediaItemId } : {}),
           ...(mediaType ? { mediaType } : {}),
           ...(listItem ? { listItem } : {}),
-        };
+        } as any;
 
         // Generate a new rkey using TID
         const rkey = TID.nextStr();
@@ -126,10 +122,6 @@ export const createRouter = (ctx: AppContext) => {
         const currentData = existingSegment.value as any;
 
         // Validate required fields if provided
-        if (text !== undefined && (text === null || text.trim() === '')) {
-          return res.status(400).json({ error: 'Text cannot be empty' });
-        }
-
         if (percentage !== undefined && percentage !== null) {
           if (percentage < 0 || percentage > 100) {
             return res.status(400).json({
@@ -146,8 +138,14 @@ export const createRouter = (ctx: AppContext) => {
         const rkey = rkeyMatch[1];
 
         // Update the record, keeping existing data but updating provided fields
-        const updatedRecord: AppCollectiveSocialFeedReviewsegment.Record = {
-          text: text !== undefined ? text.trim() : currentData.text,
+        const updatedRecord = {
+          ...(text !== undefined
+            ? text && text.trim()
+              ? { text: text.trim() }
+              : {}
+            : currentData.text
+              ? { text: currentData.text }
+              : {}),
           percentage:
             percentage !== undefined ? percentage : currentData.percentage,
           createdAt: currentData.createdAt,
@@ -179,7 +177,7 @@ export const createRouter = (ctx: AppContext) => {
             : currentData.listItem
               ? { listItem: currentData.listItem }
               : {}),
-        };
+        } as AppCollectiveSocialFeedReviewsegment.Record;
 
         const response = await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,

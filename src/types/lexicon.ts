@@ -77,7 +77,7 @@ export namespace AppCollectiveSocialFeedReviewsegment {
   export interface Record {
     $type?: 'app.collectivesocial.feed.reviewsegment';
     title?: string;
-    text: string;
+    text?: string;
     percentage: number; // 0-100, progress when segment was written
     mediaItemId?: number; // Reference to media_items table
     mediaType?:
