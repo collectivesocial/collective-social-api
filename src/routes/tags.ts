@@ -212,11 +212,11 @@ export const createRouter = (ctx: AppContext, app: Express) => {
         // Check if user is admin
         const user = await (ctx.db as any)
           .selectFrom('users')
-          .select('is_admin')
+          .select('isAdmin')
           .where('did', '=', agent.did!)
           .executeTakeFirst();
 
-        if (!user || !user.is_admin) {
+        if (!user || !user.isAdmin) {
           return res.status(403).json({ error: 'Admin access required' });
         }
 
@@ -245,4 +245,213 @@ export const createRouter = (ctx: AppContext, app: Express) => {
       }
     }
   );
+
+  // Get all tags with statistics (admin only)
+  app.get('/admin/tags', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await (ctx.db as any)
+        .selectFrom('users')
+        .select('isAdmin')
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const tags = await (ctx.db as any)
+        .selectFrom('tags')
+        .leftJoin('media_item_tags', 'tags.id', 'media_item_tags.tag_id')
+        .select([
+          'tags.id',
+          'tags.name',
+          'tags.slug',
+          'tags.status',
+          'tags.created_at',
+          sql<number>`COUNT(DISTINCT media_item_tags.media_item_id)`.as(
+            'itemCount'
+          ),
+          sql<number>`COUNT(DISTINCT media_item_tags.user_did)`.as('userCount'),
+        ])
+        .groupBy([
+          'tags.id',
+          'tags.name',
+          'tags.slug',
+          'tags.status',
+          'tags.created_at',
+        ])
+        .orderBy('itemCount', 'desc')
+        .execute();
+
+      res.json({ tags });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to fetch admin tags');
+      res.status(500).json({ error: 'Failed to fetch tags' });
+    }
+  });
+
+  // Get merge preview for two tags (admin only)
+  app.get('/admin/tags/merge-preview', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await (ctx.db as any)
+        .selectFrom('users')
+        .select('isAdmin')
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { sourceTagId, targetTagId } = req.query;
+
+      if (!sourceTagId || !targetTagId) {
+        return res
+          .status(400)
+          .json({ error: 'Source and target tag IDs required' });
+      }
+
+      // Get affected items and users
+      const affectedItems = await (ctx.db as any)
+        .selectFrom('media_item_tags')
+        .innerJoin(
+          'media_items',
+          'media_item_tags.media_item_id',
+          'media_items.id'
+        )
+        .select([
+          'media_items.id',
+          'media_items.title',
+          'media_items.creator',
+          'media_items.media_type',
+          'media_item_tags.user_did',
+        ])
+        .where('media_item_tags.tag_id', '=', parseInt(sourceTagId as string))
+        .execute();
+
+      // Check for duplicates (same item + user with target tag)
+      const duplicates = await (ctx.db as any)
+        .selectFrom('media_item_tags as source')
+        .innerJoin('media_item_tags as target', (join: any) =>
+          join
+            .onRef('source.media_item_id', '=', 'target.media_item_id')
+            .onRef('source.user_did', '=', 'target.user_did')
+        )
+        .select(['source.media_item_id', 'source.user_did'])
+        .where('source.tag_id', '=', parseInt(sourceTagId as string))
+        .where('target.tag_id', '=', parseInt(targetTagId as string))
+        .execute();
+
+      res.json({
+        affectedItems,
+        duplicateCount: duplicates.length,
+        duplicates,
+      });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to get merge preview');
+      res.status(500).json({ error: 'Failed to get merge preview' });
+    }
+  });
+
+  // Merge tags (admin only)
+  app.post('/admin/tags/merge', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await (ctx.db as any)
+        .selectFrom('users')
+        .select('isAdmin')
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { sourceTagId, targetTagId } = req.body;
+
+      if (!sourceTagId || !targetTagId) {
+        return res
+          .status(400)
+          .json({ error: 'Source and target tag IDs required' });
+      }
+
+      if (sourceTagId === targetTagId) {
+        return res
+          .status(400)
+          .json({ error: 'Cannot merge a tag with itself' });
+      }
+
+      // Start transaction-like operations
+      // 1. Delete duplicate entries (same item + user with both tags)
+      await (ctx.db as any)
+        .deleteFrom('media_item_tags')
+        .where((eb: any) =>
+          eb.and([
+            eb('tag_id', '=', sourceTagId),
+            eb.exists(
+              eb
+                .selectFrom('media_item_tags as target')
+                .select('target.tag_id')
+                .whereRef(
+                  'target.media_item_id',
+                  '=',
+                  'media_item_tags.media_item_id'
+                )
+                .whereRef('target.user_did', '=', 'media_item_tags.user_did')
+                .where('target.tag_id', '=', targetTagId)
+            ),
+          ])
+        )
+        .execute();
+
+      // 2. Update remaining source tag references to target tag
+      const updateResult = await (ctx.db as any)
+        .updateTable('media_item_tags')
+        .set({ tag_id: targetTagId })
+        .where('tag_id', '=', sourceTagId)
+        .executeTakeFirst();
+
+      // 3. Mark source tag as merged
+      await (ctx.db as any)
+        .updateTable('tags')
+        .set({ status: 'merged' })
+        .where('id', '=', sourceTagId)
+        .execute();
+
+      ctx.logger.info(
+        {
+          sourceTagId,
+          targetTagId,
+          rowsUpdated: updateResult.numUpdatedRows,
+          userDid: agent.did,
+        },
+        'Merged tags'
+      );
+
+      res.json({
+        success: true,
+        rowsUpdated: Number(updateResult.numUpdatedRows || 0),
+      });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to merge tags');
+      res.status(500).json({ error: 'Failed to merge tags' });
+    }
+  });
 };
