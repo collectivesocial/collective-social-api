@@ -202,7 +202,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
       }
 
       const { itemId } = req.params;
-      const { tagName } = req.body;
+      let { tagName } = req.body;
 
       if (
         !tagName ||
@@ -211,6 +211,9 @@ export const createRouter = (ctx: AppContext, app: Express) => {
       ) {
         return res.status(400).json({ error: 'Tag name is required' });
       }
+
+      // Trim whitespace and convert to lowercase
+      tagName = tagName.trim().toLowerCase();
 
       const slug = normalizeTag(tagName);
 
@@ -238,11 +241,11 @@ export const createRouter = (ctx: AppContext, app: Express) => {
         .executeTakeFirst();
 
       if (!tag) {
-        // Create new tag
+        // Create new tag (tagName is already trimmed and lowercase)
         tag = await ctx.db
           .insertInto('tags')
           .values({
-            name: tagName.trim(),
+            name: tagName,
             slug: slug,
             status: 'active',
             created_at: new Date(),
@@ -468,6 +471,88 @@ export const createRouter = (ctx: AppContext, app: Express) => {
     } catch (err) {
       ctx.logger.error({ err }, 'Failed to get merge preview');
       res.status(500).json({ error: 'Failed to get merge preview' });
+    }
+  });
+
+  // Update tag (admin only)
+  app.put('/admin/tags/:tagId', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await (ctx.db as any)
+        .selectFrom('users')
+        .select('isAdmin')
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { tagId } = req.params;
+      let { name } = req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ error: 'Tag name is required' });
+      }
+
+      // Trim and lowercase the name
+      name = name.trim().toLowerCase();
+      const slug = normalizeTag(name);
+
+      if (slug.length === 0) {
+        return res.status(400).json({ error: 'Invalid tag name' });
+      }
+
+      // Check if tag exists
+      const existingTag = await ctx.db
+        .selectFrom('tags')
+        .select(['id', 'name', 'slug'])
+        .where('id', '=', parseInt(tagId))
+        .executeTakeFirst();
+
+      if (!existingTag) {
+        return res.status(404).json({ error: 'Tag not found' });
+      }
+
+      // Check if another tag with the same slug already exists
+      const conflictingTag = await ctx.db
+        .selectFrom('tags')
+        .select(['id', 'name'])
+        .where('slug', '=', slug)
+        .where('id', '!=', parseInt(tagId))
+        .where('status', '=', 'active')
+        .executeTakeFirst();
+
+      if (conflictingTag) {
+        return res.status(400).json({
+          error: `A tag with this name already exists: "${conflictingTag.name}". Consider merging instead.`,
+        });
+      }
+
+      // Update the tag
+      await ctx.db
+        .updateTable('tags')
+        .set({
+          name: name,
+          slug: slug,
+        } as any)
+        .where('id', '=', parseInt(tagId))
+        .execute();
+
+      ctx.logger.info(
+        { tagId, oldName: existingTag.name, newName: name },
+        'Tag updated'
+      );
+
+      res.json({ success: true, tag: { id: parseInt(tagId), name, slug } });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to update tag');
+      res.status(500).json({ error: 'Failed to update tag' });
     }
   });
 
