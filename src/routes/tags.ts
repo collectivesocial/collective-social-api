@@ -63,9 +63,16 @@ export const createRouter = (ctx: AppContext, app: Express) => {
     try {
       const { itemId } = req.params;
 
+      // Exclude tags that have pending reports for this item
       const tags = await (ctx.db as any)
         .selectFrom('media_item_tags')
         .innerJoin('tags', 'media_item_tags.tag_id', 'tags.id')
+        .leftJoin('tag_reports', (join: any) =>
+          join
+            .onRef('tag_reports.tag_id', '=', 'tags.id')
+            .onRef('tag_reports.item_id', '=', 'media_item_tags.media_item_id')
+            .on('tag_reports.status', '=', 'pending')
+        )
         .select([
           'tags.id',
           'tags.name',
@@ -76,6 +83,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
         ])
         .where('media_item_tags.media_item_id', '=', parseInt(itemId))
         .where('tags.status', '=', 'active')
+        .where('tag_reports.id', 'is', null) // Exclude tags with pending reports
         .groupBy(['tags.id', 'tags.name', 'tags.slug'])
         .orderBy('tags.name', 'asc')
         .execute();
@@ -454,4 +462,240 @@ export const createRouter = (ctx: AppContext, app: Express) => {
       res.status(500).json({ error: 'Failed to merge tags' });
     }
   });
+
+  // Report a tag on a specific item
+  app.post(
+    '/media/:itemId/tags/:tagId/report',
+    async (req: Request, res: Response) => {
+      try {
+        const agent = await getSessionAgent(req, res, ctx);
+        if (!agent) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        const { itemId, tagId } = req.params;
+        const { reason } = req.body;
+
+        if (!reason || !reason.trim()) {
+          return res.status(400).json({ error: 'Reason is required' });
+        }
+
+        const now = new Date();
+
+        // Check if user already reported this tag on this item
+        const existingReport = await (ctx.db as any)
+          .selectFrom('tag_reports')
+          .select('id')
+          .where('item_id', '=', parseInt(itemId))
+          .where('tag_id', '=', parseInt(tagId))
+          .where('reporter_did', '=', agent.did!)
+          .where('status', '=', 'pending')
+          .executeTakeFirst();
+
+        if (existingReport) {
+          return res
+            .status(400)
+            .json({ error: 'You have already reported this tag' });
+        }
+
+        await (ctx.db as any)
+          .insertInto('tag_reports')
+          .values({
+            item_id: parseInt(itemId),
+            tag_id: parseInt(tagId),
+            reporter_did: agent.did!,
+            reason: reason.trim(),
+            created_at: now,
+            status: 'pending',
+          })
+          .execute();
+
+        ctx.logger.info(
+          { itemId, tagId, reporterDid: agent.did, reason },
+          'Tag reported'
+        );
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to report tag');
+        res.status(500).json({ error: 'Failed to report tag' });
+      }
+    }
+  );
+
+  // Get all tag reports (admin only)
+  app.get('/admin/tag-reports', async (req: Request, res: Response) => {
+    try {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user is admin
+      const user = await (ctx.db as any)
+        .selectFrom('users')
+        .select('isAdmin')
+        .where('did', '=', agent.did!)
+        .executeTakeFirst();
+
+      if (!user || !user.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+
+      const { status } = req.query;
+
+      let query = (ctx.db as any)
+        .selectFrom('tag_reports')
+        .innerJoin('tags', 'tag_reports.tag_id', 'tags.id')
+        .innerJoin('media_items', 'tag_reports.item_id', 'media_items.id')
+        .select([
+          'tag_reports.id',
+          'tag_reports.item_id',
+          'tag_reports.tag_id',
+          'tag_reports.reporter_did',
+          'tag_reports.reason',
+          'tag_reports.created_at',
+          'tag_reports.status',
+          'tags.name as tag_name',
+          'tags.slug as tag_slug',
+          'media_items.title as item_title',
+          'media_items.creator as item_creator',
+          'media_items.mediaType as item_media_type',
+        ]);
+
+      if (status && status !== 'all') {
+        query = query.where('tag_reports.status', '=', status);
+      }
+
+      const reports = await query
+        .orderBy('tag_reports.created_at', 'desc')
+        .execute();
+
+      // Get report counts per tag per item
+      const reportCounts = await (ctx.db as any)
+        .selectFrom('tag_reports')
+        .select([
+          'tag_reports.item_id',
+          'tag_reports.tag_id',
+          sql<number>`COUNT(*)`.as('report_count'),
+        ])
+        .where('tag_reports.status', '=', 'pending')
+        .groupBy(['tag_reports.item_id', 'tag_reports.tag_id'])
+        .execute();
+
+      res.json({ reports, reportCounts });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to fetch tag reports');
+      res.status(500).json({ error: 'Failed to fetch tag reports' });
+    }
+  });
+
+  // Remove tag from item (via report moderation)
+  app.post(
+    '/admin/tag-reports/:reportId/remove-tag',
+    async (req: Request, res: Response) => {
+      try {
+        const agent = await getSessionAgent(req, res, ctx);
+        if (!agent) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        // Check if user is admin
+        const user = await (ctx.db as any)
+          .selectFrom('users')
+          .select('isAdmin')
+          .where('did', '=', agent.did!)
+          .executeTakeFirst();
+
+        if (!user || !user.isAdmin) {
+          return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        const { reportId } = req.params;
+
+        // Get the report details
+        const report = await (ctx.db as any)
+          .selectFrom('tag_reports')
+          .select(['item_id', 'tag_id'])
+          .where('id', '=', parseInt(reportId))
+          .executeTakeFirst();
+
+        if (!report) {
+          return res.status(404).json({ error: 'Report not found' });
+        }
+
+        // Remove the tag from the item (all user associations)
+        await (ctx.db as any)
+          .deleteFrom('media_item_tags')
+          .where('media_item_id', '=', report.item_id)
+          .where('tag_id', '=', report.tag_id)
+          .execute();
+
+        // Mark all related reports as resolved
+        await (ctx.db as any)
+          .updateTable('tag_reports')
+          .set({ status: 'resolved' })
+          .where('item_id', '=', report.item_id)
+          .where('tag_id', '=', report.tag_id)
+          .execute();
+
+        ctx.logger.info(
+          {
+            reportId,
+            itemId: report.item_id,
+            tagId: report.tag_id,
+            adminDid: agent.did,
+          },
+          'Tag removed from item via report'
+        );
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to remove tag');
+        res.status(500).json({ error: 'Failed to remove tag' });
+      }
+    }
+  );
+
+  // Dismiss a tag report
+  app.post(
+    '/admin/tag-reports/:reportId/dismiss',
+    async (req: Request, res: Response) => {
+      try {
+        const agent = await getSessionAgent(req, res, ctx);
+        if (!agent) {
+          return res.status(401).json({ error: 'Not authenticated' });
+        }
+
+        // Check if user is admin
+        const user = await (ctx.db as any)
+          .selectFrom('users')
+          .select('isAdmin')
+          .where('did', '=', agent.did!)
+          .executeTakeFirst();
+
+        if (!user || !user.isAdmin) {
+          return res.status(403).json({ error: 'Admin access required' });
+        }
+
+        const { reportId } = req.params;
+
+        await (ctx.db as any)
+          .updateTable('tag_reports')
+          .set({ status: 'dismissed' })
+          .where('id', '=', parseInt(reportId))
+          .execute();
+
+        ctx.logger.info(
+          { reportId, adminDid: agent.did },
+          'Tag report dismissed'
+        );
+
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to dismiss report');
+        res.status(500).json({ error: 'Failed to dismiss report' });
+      }
+    }
+  );
 };
