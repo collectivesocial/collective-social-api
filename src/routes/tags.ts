@@ -215,6 +215,12 @@ export const createRouter = (ctx: AppContext, app: Express) => {
       // Trim whitespace and convert to lowercase
       tagName = tagName.trim().toLowerCase();
 
+      if (tagName.length > 36) {
+        return res
+          .status(400)
+          .json({ error: 'Tag name must be 36 characters or less' });
+      }
+
       const slug = normalizeTag(tagName);
 
       if (slug.length === 0) {
@@ -502,6 +508,13 @@ export const createRouter = (ctx: AppContext, app: Express) => {
 
       // Trim and lowercase the name
       name = name.trim().toLowerCase();
+
+      if (name.length > 36) {
+        return res
+          .status(400)
+          .json({ error: 'Tag name must be 36 characters or less' });
+      }
+
       const slug = normalizeTag(name);
 
       if (slug.length === 0) {
