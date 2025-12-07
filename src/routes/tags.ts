@@ -58,6 +58,102 @@ export const createRouter = (ctx: AppContext, app: Express) => {
     }
   });
 
+  // Get items for a specific tag (tag search page)
+  app.get('/tags/:tagSlug/items', async (req: Request, res: Response) => {
+    try {
+      const { tagSlug } = req.params;
+      const { sort = 'relevant' } = req.query;
+
+      // Find the tag by slug
+      const tag = await (ctx.db as any)
+        .selectFrom('tags')
+        .select(['id', 'name', 'slug'])
+        .where('slug', '=', tagSlug)
+        .where('status', '=', 'active')
+        .executeTakeFirst();
+
+      if (!tag) {
+        return res.status(404).json({ error: 'Tag not found' });
+      }
+
+      // Get all media items with this tag
+      let query = (ctx.db as any)
+        .selectFrom('media_item_tags')
+        .innerJoin(
+          'media_items',
+          'media_item_tags.media_item_id',
+          'media_items.id'
+        )
+        .leftJoin('tag_reports', (join: any) =>
+          join
+            .onRef('tag_reports.tag_id', '=', 'media_item_tags.tag_id')
+            .onRef('tag_reports.item_id', '=', 'media_item_tags.media_item_id')
+            .on('tag_reports.status', '=', 'pending')
+        )
+        .select([
+          'media_items.id',
+          'media_items.mediaType',
+          'media_items.title',
+          'media_items.creator',
+          'media_items.isbn',
+          'media_items.coverImage',
+          'media_items.description',
+          'media_items.publishedYear',
+          'media_items.totalRatings',
+          'media_items.totalReviews',
+          'media_items.averageRating',
+        ])
+        .where('media_item_tags.tag_id', '=', tag.id)
+        .where('tag_reports.id', 'is', null); // Exclude items with pending reports for this tag
+
+      // Add sort-specific fields and ordering
+      if (sort === 'relevant') {
+        query = query
+          .select(
+            sql<number>`COUNT(DISTINCT media_item_tags.user_did)`.as('tagCount')
+          )
+          .groupBy([
+            'media_items.id',
+            'media_items.mediaType',
+            'media_items.title',
+            'media_items.creator',
+            'media_items.isbn',
+            'media_items.coverImage',
+            'media_items.description',
+            'media_items.publishedYear',
+            'media_items.totalRatings',
+            'media_items.totalReviews',
+            'media_items.averageRating',
+          ])
+          .orderBy(sql`COUNT(DISTINCT media_item_tags.user_did)`, 'desc');
+      } else if (sort === 'rating') {
+        query = query
+          .groupBy([
+            'media_items.id',
+            'media_items.mediaType',
+            'media_items.title',
+            'media_items.creator',
+            'media_items.isbn',
+            'media_items.coverImage',
+            'media_items.description',
+            'media_items.publishedYear',
+            'media_items.totalRatings',
+            'media_items.totalReviews',
+            'media_items.averageRating',
+          ])
+          .orderBy('media_items.averageRating', 'desc')
+          .orderBy('media_items.totalRatings', 'desc');
+      }
+
+      const items = await query.execute();
+
+      res.json({ items, tagName: tag.name });
+    } catch (err) {
+      ctx.logger.error({ err }, 'Failed to fetch items for tag');
+      res.status(500).json({ error: 'Failed to fetch items for tag' });
+    }
+  });
+
   // Get tags for a specific media item
   app.get('/media/:itemId/tags', async (req: Request, res: Response) => {
     try {
@@ -73,6 +169,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
             .onRef('tag_reports.item_id', '=', 'media_item_tags.media_item_id')
             .on('tag_reports.status', '=', 'pending')
         )
+        .leftJoin('users', 'media_item_tags.user_did', 'users.did')
         .select([
           'tags.id',
           'tags.name',
@@ -80,6 +177,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
           sql<number>`COUNT(DISTINCT media_item_tags.media_item_id)`.as(
             'usageCount'
           ),
+          sql<boolean>`BOOL_OR(users."isAdmin")`.as('hasAdminTag'),
         ])
         .where('media_item_tags.media_item_id', '=', parseInt(itemId))
         .where('tags.status', '=', 'active')
