@@ -10,6 +10,7 @@ import { createRouter as createFeedRouter } from './routes/feed';
 import { createRouter as createShareRouter } from './routes/share';
 import { createRouter as createReviewSegmentsRouter } from './routes/reviewSegments';
 import { createRouter as createTagsRouter } from './routes/tags';
+import { createRouter as createCommentsRouter } from './routes/comments';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
@@ -61,6 +62,9 @@ createAppContext().then((ctx) => {
 
   // Mount tags routes
   createTagsRouter(ctx, app);
+
+  // Mount comments routes
+  app.use('/comments', createCommentsRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {

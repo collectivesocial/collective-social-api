@@ -94,3 +94,20 @@ export namespace AppCollectiveSocialFeedReviewsegment {
     createdAt: string;
   }
 }
+
+export namespace AppCollectiveSocialFeedComment {
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.comment';
+    text: string;
+    reviewRef?: {
+      uri: string;
+      cid: string;
+    };
+    parentCommentRef?: {
+      uri: string;
+      cid: string;
+    };
+    createdAt: string;
+    updatedAt: string;
+  }
+}

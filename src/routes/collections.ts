@@ -549,6 +549,37 @@ export const createRouter = (ctx: AppContext) => {
 
             if (review && review.trim()) {
               const now = new Date();
+
+              // Create AT Protocol review record
+              let reviewUri: string | null = null;
+              try {
+                const reviewRecord: AppCollectiveSocialFeedReview.Record = {
+                  $type: 'app.collectivesocial.feed.review',
+                  text: review.trim(),
+                  rating: Number(rating),
+                  mediaItemId: mediaItemId,
+                  mediaType: mediaType as any,
+                  listItem: existingItem.uri,
+                  createdAt: now.toISOString(),
+                  updatedAt: now.toISOString(),
+                };
+
+                const reviewResponse =
+                  await agent.api.com.atproto.repo.createRecord({
+                    repo: agent.did!,
+                    collection: 'app.collectivesocial.feed.review',
+                    record: reviewRecord as any,
+                  });
+
+                reviewUri = reviewResponse.data.uri;
+              } catch (err) {
+                ctx.logger.error(
+                  { err },
+                  'Failed to create AT Protocol review record'
+                );
+                // Continue anyway - we'll store the review in the database without the URI
+              }
+
               await ctx.db
                 .insertInto('reviews')
                 .values({
@@ -558,7 +589,7 @@ export const createRouter = (ctx: AppContext) => {
                   rating: Number(rating),
                   review: review.trim(),
                   listItemUri: existingItem.uri,
-                  reviewUri: null, // Will be updated when AT Protocol review record is created
+                  reviewUri: reviewUri,
                   createdAt: now,
                   updatedAt: now,
                 } as any)
@@ -568,6 +599,7 @@ export const createRouter = (ctx: AppContext) => {
                     .doUpdateSet({
                       rating: Number(rating),
                       review: review.trim(),
+                      reviewUri: reviewUri,
                       updatedAt: now,
                     })
                 )
@@ -867,6 +899,36 @@ export const createRouter = (ctx: AppContext) => {
           const oldRating = existingReview?.rating;
           const now = new Date();
 
+          // Create AT Protocol review record
+          let reviewUri: string | null = null;
+          try {
+            const reviewRecord: AppCollectiveSocialFeedReview.Record = {
+              $type: 'app.collectivesocial.feed.review',
+              text: review.trim(),
+              rating: Number(rating),
+              mediaItemId: mediaItemId,
+              mediaType: mediaType as any,
+              listItem: response.data.uri,
+              createdAt: now.toISOString(),
+              updatedAt: now.toISOString(),
+            };
+
+            const reviewResponse =
+              await agent.api.com.atproto.repo.createRecord({
+                repo: agent.did!,
+                collection: 'app.collectivesocial.feed.review',
+                record: reviewRecord as any,
+              });
+
+            reviewUri = reviewResponse.data.uri;
+          } catch (err) {
+            ctx.logger.error(
+              { err },
+              'Failed to create AT Protocol review record'
+            );
+            // Continue anyway - we'll store the review in the database without the URI
+          }
+
           // Upsert review - one review per user per media item
           await ctx.db
             .insertInto('reviews')
@@ -877,7 +939,7 @@ export const createRouter = (ctx: AppContext) => {
               rating: Number(rating),
               review: review.trim(),
               listItemUri: response.data.uri,
-              reviewUri: null, // Will be updated when AT Protocol review record is created
+              reviewUri: reviewUri,
               createdAt: now,
               updatedAt: now,
             } as any)
@@ -888,6 +950,7 @@ export const createRouter = (ctx: AppContext) => {
                   rating: Number(rating),
                   review: review.trim(),
                   listItemUri: response.data.uri,
+                  reviewUri: reviewUri,
                   updatedAt: now,
                 })
             )
@@ -896,7 +959,7 @@ export const createRouter = (ctx: AppContext) => {
           // Update aggregated stats
           const currentItem = await ctx.db
             .selectFrom('media_items')
-            .select(['totalReviews', 'averageRating'])
+            .select(['totalRatings', 'totalReviews', 'averageRating'])
             .where('id', '=', mediaItemId)
             .executeTakeFirst();
 
@@ -906,19 +969,25 @@ export const createRouter = (ctx: AppContext) => {
               : 0;
 
             if (isNewReview) {
-              // Adding a new review
+              // Adding a new review - increment both ratings and reviews
+              const newTotalRatings = currentItem.totalRatings + 1;
               const newTotalReviews = currentItem.totalReviews + 1;
               const newAverage =
-                (currentAvg * currentItem.totalReviews + Number(rating)) /
-                newTotalReviews;
+                (currentAvg * currentItem.totalRatings + Number(rating)) /
+                newTotalRatings;
+
+              // Increment the specific rating count
+              const ratingColumn = getRatingColumnName(Number(rating));
 
               await ctx.db
                 .updateTable('media_items')
                 .set({
+                  totalRatings: newTotalRatings,
                   totalReviews: newTotalReviews,
                   averageRating: parseFloat(newAverage.toFixed(2)),
+                  [ratingColumn]: sql`"${sql.raw(ratingColumn)}" + 1`,
                   updatedAt: new Date(),
-                })
+                } as any)
                 .where('id', '=', mediaItemId)
                 .execute();
 
@@ -943,17 +1012,22 @@ export const createRouter = (ctx: AppContext) => {
             } else if (oldRating !== Number(rating)) {
               // Updating existing review rating
               const newAverage =
-                (currentAvg * currentItem.totalReviews -
+                (currentAvg * currentItem.totalRatings -
                   Number(oldRating) +
                   Number(rating)) /
-                currentItem.totalReviews;
+                currentItem.totalRatings;
+
+              const oldRatingColumn = getRatingColumnName(Number(oldRating));
+              const newRatingColumn = getRatingColumnName(Number(rating));
 
               await ctx.db
                 .updateTable('media_items')
                 .set({
                   averageRating: parseFloat(newAverage.toFixed(2)),
+                  [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
+                  [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
                   updatedAt: new Date(),
-                })
+                } as any)
                 .where('id', '=', mediaItemId)
                 .execute();
             }
@@ -1095,6 +1169,36 @@ export const createRouter = (ctx: AppContext) => {
           if (review && review.trim() && mediaType) {
             const now = new Date();
 
+            // Create AT Protocol review record
+            let reviewUri: string | null = null;
+            try {
+              const reviewRecord: AppCollectiveSocialFeedReview.Record = {
+                $type: 'app.collectivesocial.feed.review',
+                text: review.trim(),
+                rating: Number(rating),
+                mediaItemId: mediaItemId,
+                mediaType: mediaType as any,
+                listItem: itemUri,
+                createdAt: now.toISOString(),
+                updatedAt: now.toISOString(),
+              };
+
+              const reviewResponse =
+                await agent.api.com.atproto.repo.createRecord({
+                  repo: agent.did!,
+                  collection: 'app.collectivesocial.feed.review',
+                  record: reviewRecord as any,
+                });
+
+              reviewUri = reviewResponse.data.uri;
+            } catch (err) {
+              ctx.logger.error(
+                { err },
+                'Failed to create AT Protocol review record'
+              );
+              // Continue anyway - we'll store the review in the database without the URI
+            }
+
             // Upsert review
             await ctx.db
               .insertInto('reviews')
@@ -1105,7 +1209,7 @@ export const createRouter = (ctx: AppContext) => {
                 rating: Number(rating),
                 review: review.trim(),
                 listItemUri: itemUri,
-                reviewUri: null, // Will be updated when AT Protocol review record is created
+                reviewUri: reviewUri,
                 createdAt: now,
                 updatedAt: now,
               } as any)
@@ -1115,6 +1219,7 @@ export const createRouter = (ctx: AppContext) => {
                   .doUpdateSet({
                     rating: Number(rating),
                     review: review.trim(),
+                    reviewUri: reviewUri,
                     updatedAt: now,
                   })
               )
@@ -1123,7 +1228,7 @@ export const createRouter = (ctx: AppContext) => {
             // Update aggregated stats
             const currentItem = await ctx.db
               .selectFrom('media_items')
-              .select(['totalReviews', 'averageRating'])
+              .select(['totalRatings', 'totalReviews', 'averageRating'])
               .where('id', '=', mediaItemId)
               .executeTakeFirst();
 
@@ -1133,19 +1238,25 @@ export const createRouter = (ctx: AppContext) => {
                 : 0;
 
               if (isNewReview) {
-                // Adding a new review
+                // Adding a new review - increment both ratings and reviews
+                const newTotalRatings = currentItem.totalRatings + 1;
                 const newTotalReviews = currentItem.totalReviews + 1;
                 const newAverage =
-                  (currentAvg * currentItem.totalReviews + Number(rating)) /
-                  newTotalReviews;
+                  (currentAvg * currentItem.totalRatings + Number(rating)) /
+                  newTotalRatings;
+
+                // Increment the specific rating count
+                const ratingColumn = getRatingColumnName(Number(rating));
 
                 await ctx.db
                   .updateTable('media_items')
                   .set({
+                    totalRatings: newTotalRatings,
                     totalReviews: newTotalReviews,
                     averageRating: parseFloat(newAverage.toFixed(2)),
+                    [ratingColumn]: sql`"${sql.raw(ratingColumn)}" + 1`,
                     updatedAt: new Date(),
-                  })
+                  } as any)
                   .where('id', '=', mediaItemId)
                   .execute();
 
@@ -1174,15 +1285,20 @@ export const createRouter = (ctx: AppContext) => {
               } else if (oldRating !== Number(rating)) {
                 // Updating existing review rating
                 const newAverage =
-                  (currentAvg * currentItem.totalReviews -
+                  (currentAvg * currentItem.totalRatings -
                     Number(oldRating) +
                     Number(rating)) /
-                  currentItem.totalReviews;
+                  currentItem.totalRatings;
+
+                const oldRatingColumn = getRatingColumnName(Number(oldRating));
+                const newRatingColumn = getRatingColumnName(Number(rating));
 
                 await ctx.db
                   .updateTable('media_items')
                   .set({
                     averageRating: parseFloat(newAverage.toFixed(2)),
+                    [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
+                    [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
                     updatedAt: new Date(),
                   })
                   .where('id', '=', mediaItemId)

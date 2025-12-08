@@ -1,0 +1,42 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.comment",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A comment on a review or another comment",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["text", "createdAt"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 3000,
+            "description": "The comment text"
+          },
+          "reviewRef": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "Reference to the review being commented on (if top-level comment)"
+          },
+          "parentCommentRef": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "Reference to the parent comment (if nested comment)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "The date and time the comment was created"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "The date and time the comment was last updated"
+          }
+        }
+      }
+    }
+  }
+}

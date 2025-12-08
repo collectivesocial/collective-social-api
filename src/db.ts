@@ -84,6 +84,18 @@ export type TagReport = {
   status: string;
 };
 
+export type PublicComment = {
+  id: Generated<number>;
+  uri: string;
+  cid: string;
+  userDid: string;
+  text: string;
+  reviewUri: string | null;
+  parentCommentUri: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -96,6 +108,7 @@ export type DatabaseSchema = {
   tags: Tag;
   media_item_tags: MediaItemTag;
   tag_reports: TagReport;
+  comments: PublicComment;
 };
 
 // Migrations
@@ -691,6 +704,52 @@ migrations['015'] = {
     await db.schema.dropTable('tag_reports').execute();
     await db.schema.dropTable('media_item_tags').execute();
     await db.schema.dropTable('tags').execute();
+  },
+};
+
+migrations['016'] = {
+  async up(db: Kysely<unknown>) {
+    // Create comments table
+    await db.schema
+      .createTable('comments')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('cid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('user_did', 'varchar(255)', (col) => col.notNull())
+      .addColumn('text', 'text', (col) => col.notNull())
+      .addColumn('review_uri', 'varchar(512)')
+      .addColumn('parent_comment_uri', 'varchar(512)')
+      .addColumn('created_at', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addColumn('updated_at', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    // Create index on review_uri for faster lookups of comments on a review
+    await db.schema
+      .createIndex('comments_review_uri_idx')
+      .on('comments')
+      .column('review_uri')
+      .execute();
+
+    // Create index on parent_comment_uri for faster lookups of nested comments
+    await db.schema
+      .createIndex('comments_parent_comment_uri_idx')
+      .on('comments')
+      .column('parent_comment_uri')
+      .execute();
+
+    // Create index on user_did for faster lookups of user's comments
+    await db.schema
+      .createIndex('comments_user_did_idx')
+      .on('comments')
+      .column('user_did')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('comments').execute();
   },
 };
 
