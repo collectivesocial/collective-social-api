@@ -715,6 +715,96 @@ migrations['016'] = {
       .addColumn('id', 'serial', (col) => col.primaryKey())
       .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
       .addColumn('cid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('userDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('text', 'text', (col) => col.notNull())
+      .addColumn('reviewUri', 'varchar(512)')
+      .addColumn('parentCommentUri', 'varchar(512)')
+      .addColumn('createdAt', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addColumn('updatedAt', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    // Create index on reviewUri for faster lookups of comments on a review
+    await db.schema
+      .createIndex('comments_review_uri_idx')
+      .on('comments')
+      .column('reviewUri')
+      .execute();
+
+    // Create index on parentCommentUri for faster lookups of nested comments
+    await db.schema
+      .createIndex('comments_parent_comment_uri_idx')
+      .on('comments')
+      .column('parentCommentUri')
+      .execute();
+
+    // Create index on userDid for faster lookups of user's comments
+    await db.schema
+      .createIndex('comments_user_did_idx')
+      .on('comments')
+      .column('userDid')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('comments').execute();
+  },
+};
+
+migrations['017'] = {
+  async up(db: Kysely<unknown>) {
+    // Fix comments table column names from snake_case to camelCase
+    // Drop old table and recreate with correct column names
+    await db.schema.dropTable('comments').ifExists().execute();
+
+    // Create comments table with camelCase columns
+    await db.schema
+      .createTable('comments')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('cid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('userDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('text', 'text', (col) => col.notNull())
+      .addColumn('reviewUri', 'varchar(512)')
+      .addColumn('parentCommentUri', 'varchar(512)')
+      .addColumn('createdAt', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .addColumn('updatedAt', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    // Create indexes
+    await db.schema
+      .createIndex('comments_review_uri_idx')
+      .on('comments')
+      .column('reviewUri')
+      .execute();
+
+    await db.schema
+      .createIndex('comments_parent_comment_uri_idx')
+      .on('comments')
+      .column('parentCommentUri')
+      .execute();
+
+    await db.schema
+      .createIndex('comments_user_did_idx')
+      .on('comments')
+      .column('userDid')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    // Revert to snake_case columns
+    await db.schema.dropTable('comments').ifExists().execute();
+
+    await db.schema
+      .createTable('comments')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('cid', 'varchar(255)', (col) => col.notNull())
       .addColumn('user_did', 'varchar(255)', (col) => col.notNull())
       .addColumn('text', 'text', (col) => col.notNull())
       .addColumn('review_uri', 'varchar(512)')
@@ -726,30 +816,35 @@ migrations['016'] = {
         col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
       )
       .execute();
+  },
+};
 
-    // Create index on review_uri for faster lookups of comments on a review
+migrations['018'] = {
+  async up(db: Kysely<unknown>) {
+    // Add profile information columns to users table
     await db.schema
-      .createIndex('comments_review_uri_idx')
-      .on('comments')
-      .column('review_uri')
+      .alterTable('users')
+      .addColumn('handle', 'varchar(255)')
+      .addColumn('displayName', 'varchar(255)')
+      .addColumn('avatar', 'text')
       .execute();
 
-    // Create index on parent_comment_uri for faster lookups of nested comments
+    // Create index on handle for lookups
     await db.schema
-      .createIndex('comments_parent_comment_uri_idx')
-      .on('comments')
-      .column('parent_comment_uri')
-      .execute();
-
-    // Create index on user_did for faster lookups of user's comments
-    await db.schema
-      .createIndex('comments_user_did_idx')
-      .on('comments')
-      .column('user_did')
+      .createIndex('users_handle_idx')
+      .on('users')
+      .column('handle')
       .execute();
   },
   async down(db: Kysely<unknown>) {
-    await db.schema.dropTable('comments').execute();
+    await db.schema
+      .alterTable('users')
+      .dropColumn('handle')
+      .dropColumn('displayName')
+      .dropColumn('avatar')
+      .execute();
+
+    await db.schema.dropIndex('users_handle_idx').execute();
   },
 };
 

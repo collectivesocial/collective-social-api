@@ -167,17 +167,36 @@ export const createRouter = (ctx: AppContext) => {
           .orderBy('createdAt', 'asc')
           .execute();
 
-        // Fetch user information for each comment
+        // Fetch user profile from AT Protocol for each comment
+        const { Agent } = await import('@atproto/api');
         const commentsWithUsers = await Promise.all(
           comments.map(async (comment) => {
-            const user = await ctx.db
-              .selectFrom('users')
-              .selectAll()
-              .where('did', '=', comment.userDid)
-              .executeTakeFirst();
+            let user = null;
+            try {
+              // Create a public agent (no auth needed for profile lookups)
+              const agent = new Agent({
+                service: 'https://public.api.bsky.app',
+              });
+              const profile = await agent.getProfile({
+                actor: comment.userDid,
+              });
+              user = {
+                did: profile.data.did,
+                handle: profile.data.handle,
+                displayName: profile.data.displayName || null,
+                avatar: profile.data.avatar || null,
+              };
+            } catch (err) {
+              ctx.logger.warn(
+                { err, did: comment.userDid },
+                'Failed to fetch user profile from AT Protocol'
+              );
+            }
 
             return {
               ...comment,
+              createdAt: comment.createdAt.toISOString(),
+              updatedAt: comment.updatedAt.toISOString(),
               user,
             };
           })
@@ -207,17 +226,34 @@ export const createRouter = (ctx: AppContext) => {
           .orderBy('createdAt', 'asc')
           .execute();
 
-        // Fetch user information for each reply
+        // Fetch user profile from AT Protocol for each reply
+        const { Agent } = await import('@atproto/api');
         const repliesWithUsers = await Promise.all(
           replies.map(async (reply) => {
-            const user = await ctx.db
-              .selectFrom('users')
-              .selectAll()
-              .where('did', '=', reply.userDid)
-              .executeTakeFirst();
+            let user = null;
+            try {
+              // Create a public agent (no auth needed for profile lookups)
+              const agent = new Agent({
+                service: 'https://public.api.bsky.app',
+              });
+              const profile = await agent.getProfile({ actor: reply.userDid });
+              user = {
+                did: profile.data.did,
+                handle: profile.data.handle,
+                displayName: profile.data.displayName || null,
+                avatar: profile.data.avatar || null,
+              };
+            } catch (err) {
+              ctx.logger.warn(
+                { err, did: reply.userDid },
+                'Failed to fetch user profile from AT Protocol'
+              );
+            }
 
             return {
               ...reply,
+              createdAt: reply.createdAt.toISOString(),
+              updatedAt: reply.updatedAt.toISOString(),
               user,
             };
           })

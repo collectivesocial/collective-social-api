@@ -37,34 +37,42 @@ export function createUserActivityTracker(ctx: AppContext) {
           .executeTakeFirst();
 
         if (!existingUser) {
-          // First login - create user record
-          await ctx.db
-            .insertInto('users')
-            .values({
-              did: session.did,
-              firstLoginAt: now,
-              lastActivityAt: now,
-              createdAt: now,
-              updatedAt: now,
-            } as any)
-            .onConflict((oc) =>
-              oc.column('did').doUpdateSet({
-                lastActivityAt: now,
-                updatedAt: now,
-              })
-            )
-            .execute();
-
-          // Create default "Inbox" list for new user and get user profile
+          // First login - get user profile and create user record
           try {
             const oauthSession = await ctx.oauthClient.restore(session.did);
             if (oauthSession) {
               const { Agent } = await import('@atproto/api');
               const agent = new Agent(oauthSession);
 
-              // Get user profile to get handle
+              // Get user profile
               const profile = await agent.getProfile({ actor: session.did });
               const userHandle = profile.data.handle;
+              const displayName = profile.data.displayName || null;
+              const avatar = profile.data.avatar || null;
+
+              // Create user record with profile info
+              await ctx.db
+                .insertInto('users')
+                .values({
+                  did: session.did,
+                  handle: userHandle,
+                  displayName: displayName,
+                  avatar: avatar,
+                  firstLoginAt: now,
+                  lastActivityAt: now,
+                  createdAt: now,
+                  updatedAt: now,
+                } as any)
+                .onConflict((oc) =>
+                  oc.column('did').doUpdateSet({
+                    handle: userHandle,
+                    displayName: displayName,
+                    avatar: avatar,
+                    lastActivityAt: now,
+                    updatedAt: now,
+                  })
+                )
+                .execute();
 
               const defaultListRecord = {
                 $type: 'app.collectivesocial.feed.list',
@@ -116,15 +124,54 @@ export function createUserActivityTracker(ctx: AppContext) {
             'New user first login recorded'
           );
         } else {
-          // Update last activity
-          await ctx.db
-            .updateTable('users')
-            .set({
-              lastActivityAt: now,
-              updatedAt: now,
-            })
-            .where('did', '=', session.did)
-            .execute();
+          // Update last activity and refresh profile occasionally
+          const shouldRefreshProfile =
+            !existingUser.firstLoginAt ||
+            now.getTime() - existingUser.firstLoginAt.getTime() >
+              24 * 60 * 60 * 1000; // 24 hours
+
+          if (shouldRefreshProfile) {
+            try {
+              const oauthSession = await ctx.oauthClient.restore(session.did);
+              if (oauthSession) {
+                const { Agent } = await import('@atproto/api');
+                const agent = new Agent(oauthSession);
+                const profile = await agent.getProfile({ actor: session.did });
+
+                await ctx.db
+                  .updateTable('users')
+                  .set({
+                    handle: profile.data.handle,
+                    displayName: profile.data.displayName || null,
+                    avatar: profile.data.avatar || null,
+                    lastActivityAt: now,
+                    updatedAt: now,
+                  })
+                  .where('did', '=', session.did)
+                  .execute();
+              }
+            } catch (err) {
+              // If profile refresh fails, just update activity
+              await ctx.db
+                .updateTable('users')
+                .set({
+                  lastActivityAt: now,
+                  updatedAt: now,
+                })
+                .where('did', '=', session.did)
+                .execute();
+            }
+          } else {
+            // Just update last activity
+            await ctx.db
+              .updateTable('users')
+              .set({
+                lastActivityAt: now,
+                updatedAt: now,
+              })
+              .where('did', '=', session.did)
+              .execute();
+          }
         }
       }
     } catch (err) {
@@ -135,4 +182,3 @@ export function createUserActivityTracker(ctx: AppContext) {
     next();
   };
 }
-

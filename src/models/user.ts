@@ -4,6 +4,9 @@ import { Generated } from 'kysely';
 
 export interface User {
   did: string;
+  handle: string | null;
+  displayName: string | null;
+  avatar: string | null;
   firstLoginAt: Date;
   lastActivityAt: Date;
   isAdmin: Generated<boolean>;
