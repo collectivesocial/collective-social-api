@@ -96,6 +96,17 @@ export type PublicComment = {
   updatedAt: Date;
 };
 
+export type Reaction = {
+  id: Generated<number>;
+  uri: string;
+  cid: string;
+  userDid: string;
+  emoji: string;
+  subjectUri: string;
+  subjectType: 'review' | 'comment';
+  createdAt: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -109,6 +120,7 @@ export type DatabaseSchema = {
   media_item_tags: MediaItemTag;
   tag_reports: TagReport;
   comments: PublicComment;
+  reactions: Reaction;
 };
 
 // Migrations
@@ -845,6 +857,50 @@ migrations['018'] = {
       .execute();
 
     await db.schema.dropIndex('users_handle_idx').execute();
+  },
+};
+
+migrations['019'] = {
+  async up(db: Kysely<unknown>) {
+    // Create reactions table
+    await db.schema
+      .createTable('reactions')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('cid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('userDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('emoji', 'varchar(50)', (col) => col.notNull())
+      .addColumn('subjectUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('subjectType', 'varchar(50)', (col) => col.notNull()) // 'review' or 'comment'
+      .addColumn('createdAt', 'timestamp', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    // Create index on subjectUri for fast lookup of reactions on a review/comment
+    await db.schema
+      .createIndex('reactions_subject_uri_idx')
+      .on('reactions')
+      .column('subjectUri')
+      .execute();
+
+    // Create index on userDid for looking up user's reactions
+    await db.schema
+      .createIndex('reactions_user_did_idx')
+      .on('reactions')
+      .column('userDid')
+      .execute();
+
+    // Create unique index to prevent duplicate reactions (one emoji per user per subject)
+    await db.schema
+      .createIndex('reactions_user_subject_emoji_unique_idx')
+      .on('reactions')
+      .columns(['userDid', 'subjectUri', 'emoji'])
+      .unique()
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('reactions').execute();
   },
 };
 

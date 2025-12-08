@@ -1,0 +1,68 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.react",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An emoji reaction to a review or comment",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["emoji", "createdAt"],
+        "properties": {
+          "emoji": {
+            "type": "string",
+            "description": "The emoji type",
+            "enum": [
+              "joy",
+              "heart",
+              "grin",
+              "sob",
+              "scream",
+              "upside_down",
+              "smirk"
+            ]
+          },
+          "subject": {
+            "type": "union",
+            "description": "The review or comment being reacted to",
+            "refs": ["#reviewRef", "#commentRef"]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the reaction was created"
+          }
+        }
+      }
+    },
+    "reviewRef": {
+      "type": "object",
+      "required": ["uri", "cid"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri"
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid"
+        }
+      }
+    },
+    "commentRef": {
+      "type": "object",
+      "required": ["uri", "cid"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "at-uri"
+        },
+        "cid": {
+          "type": "string",
+          "format": "cid"
+        }
+      }
+    }
+  }
+}
