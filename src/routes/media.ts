@@ -487,6 +487,7 @@ export const createRouter = (ctx: AppContext) => {
             length: (mediaType === 'book' ? pageCount : runtime) || undefined,
             totalReviews: 0,
             averageRating: undefined,
+            createdBy: agent.did || undefined,
             createdAt: new Date(),
             updatedAt: new Date(),
           } as any)
@@ -537,6 +538,7 @@ export const createRouter = (ctx: AppContext) => {
           averageRating: item.averageRating
             ? parseFloat(item.averageRating.toString())
             : null,
+          createdBy: item.createdBy || null,
           ratingDistribution: {
             rating0: item.rating0,
             rating0_5: item.rating0_5,
@@ -632,7 +634,7 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
-  // PUT /media/:id - Update media item details (admin only)
+  // PUT /media/:id - Update media item details (admin or creator only)
   router.put(
     '/:id',
     handler(async (req: Request, res: Response) => {
@@ -643,18 +645,34 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      // Check if user is admin
+      const { id } = req.params;
+
+      // Check if media item exists and get its creator
+      const mediaItem = await ctx.db
+        .selectFrom('media_items')
+        .select(['id', 'createdBy'])
+        .where('id', '=', parseInt(id))
+        .executeTakeFirst();
+
+      if (!mediaItem) {
+        return res.status(404).json({ error: 'Media item not found' });
+      }
+
+      // Check if user is admin or creator
       const user = await ctx.db
         .selectFrom('users')
         .selectAll()
         .where('did', '=', agent.did!)
         .executeTakeFirst();
 
-      if (!user || !user.isAdmin) {
-        return res.status(403).json({ error: 'Admin access required' });
-      }
+      const isAdmin = user?.isAdmin || false;
+      const isCreator = mediaItem.createdBy === agent.did;
 
-      const { id } = req.params;
+      if (!isAdmin && !isCreator) {
+        return res
+          .status(403)
+          .json({ error: 'You do not have permission to edit this item' });
+      }
       const { title, creator, coverImage, description, publishedYear, length } =
         req.body;
 

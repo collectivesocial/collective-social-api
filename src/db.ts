@@ -904,6 +904,26 @@ migrations['019'] = {
   },
 };
 
+migrations['020'] = {
+  async up(db: Kysely<unknown>) {
+    // Add createdBy column to media_items to track who manually created the item
+    await db.schema
+      .alterTable('media_items')
+      .addColumn('createdBy', 'varchar(255)', (col) => col.defaultTo(null))
+      .execute();
+
+    // Create index on createdBy for looking up items created by a user
+    await db.schema
+      .createIndex('media_items_created_by_idx')
+      .on('media_items')
+      .column('createdBy')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('media_items').dropColumn('createdBy').execute();
+  },
+};
+
 // APIs
 
 export const createDb = (location: string): Database => {

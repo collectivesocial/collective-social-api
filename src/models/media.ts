@@ -35,6 +35,7 @@ export interface MediaItem {
   rating4: number;
   rating4_5: number;
   rating5: number;
+  createdBy?: string; // User DID of who created this item manually
   createdAt: Date;
   updatedAt: Date;
 }
