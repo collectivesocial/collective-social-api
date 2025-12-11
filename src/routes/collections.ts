@@ -50,6 +50,15 @@ export const createRouter = (ctx: AppContext) => {
           itemCounts[listUri] = (itemCounts[listUri] || 0) + 1;
         });
 
+        // Count how many times each collection has been copied (children count)
+        const copyCounts: Record<string, number> = {};
+        response.data.records.forEach((record: any) => {
+          const parentUri = record.value.parentListUri;
+          if (parentUri) {
+            copyCounts[parentUri] = (copyCounts[parentUri] || 0) + 1;
+          }
+        });
+
         res.json({
           collections: response.data.records.map((record: any) => ({
             uri: record.uri,
@@ -63,6 +72,7 @@ export const createRouter = (ctx: AppContext) => {
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
             itemCount: itemCounts[record.uri] || 0,
+            copyCount: copyCounts[record.uri] || 0,
           })),
         });
       } catch (err) {
@@ -294,6 +304,162 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to delete collection');
         res.status(500).json({ error: 'Failed to delete collection' });
+      }
+    })
+  );
+
+  // POST /collections/:listUri/clone - Clone a collection
+  router.post(
+    '/:listUri/clone',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        const sourceListUri = decodeURIComponent(req.params.listUri);
+
+        // Get the source list to clone
+        const listsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.list',
+        });
+
+        const sourceList = listsResponse.data.records.find(
+          (record: any) => record.uri === sourceListUri
+        );
+
+        if (!sourceList) {
+          return res.status(404).json({ error: 'Source list not found' });
+        }
+
+        const sourceListData = sourceList.value as any;
+
+        // If source list already has a parent, use that as the parent for the clone
+        // This ensures all clones reference the original source list
+        const parentListUri = sourceListData.parentListUri || sourceListUri;
+
+        // Create new list with parentListUri set to original source
+        const newListRecord: AppCollectiveSocialFeedList.Record = {
+          $type: 'app.collectivesocial.feed.list',
+          name: `${sourceListData.name} (Copy)`,
+          description: sourceListData.description || undefined,
+          parentListUri: parentListUri,
+          visibility: sourceListData.visibility || 'public',
+          purpose:
+            sourceListData.purpose || 'app.collectivesocial.defs#curatelist',
+          isDefault: false,
+          createdAt: new Date().toISOString(),
+        };
+
+        const newListResponse = await agent.api.com.atproto.repo.createRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.list',
+          record: newListRecord as any,
+        });
+
+        const newListUri = newListResponse.data.uri;
+
+        // Get all items from the source list
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+        });
+
+        const sourceItems = itemsResponse.data.records.filter(
+          (record: any) => record.value.list === sourceListUri
+        );
+
+        // Get all user's reviews to check which items they've already reviewed
+        const userReviews = await ctx.db
+          .selectFrom('reviews')
+          .select(['mediaItemId', 'rating'])
+          .where('authorDid', '=', agent.did!)
+          .execute();
+
+        const reviewedMediaItems = new Map(
+          userReviews.map((r) => [r.mediaItemId, r.rating])
+        );
+
+        // Get all user's in-progress items across all lists
+        const allUserItems = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+        });
+
+        const inProgressMediaItems = new Set(
+          allUserItems.data.records
+            .filter(
+              (record: any) =>
+                record.value.status === 'in-progress' &&
+                record.value.mediaItemId
+            )
+            .map((record: any) => record.value.mediaItemId)
+        );
+
+        // Clone each item to the new list
+        for (const sourceItem of sourceItems) {
+          const sourceItemData = sourceItem.value as any;
+          const mediaItemId = sourceItemData.mediaItemId;
+
+          // Determine status:
+          // 1. If user has reviewed this item, mark as completed
+          // 2. If user has this item in-progress somewhere, keep it in-progress
+          // 3. Otherwise, preserve the original status
+          let status = sourceItemData.status || 'want';
+          if (mediaItemId && reviewedMediaItems.has(mediaItemId)) {
+            status = 'completed';
+          } else if (mediaItemId && inProgressMediaItems.has(mediaItemId)) {
+            status = 'in-progress';
+          }
+
+          const newItemRecord: AppCollectiveSocialFeedListitem.Record = {
+            $type: 'app.collectivesocial.feed.listitem',
+            list: newListUri,
+            title: sourceItemData.title,
+            creator: sourceItemData.creator || undefined,
+            description: sourceItemData.description || undefined,
+            mediaType: sourceItemData.mediaType || 'book',
+            mediaItemId: mediaItemId || undefined,
+            status: status as any,
+            order:
+              sourceItemData.order !== undefined
+                ? sourceItemData.order
+                : undefined,
+            // Don't copy review reference - that's personal to the original list
+            review: undefined,
+            // Copy recommendations
+            recommendations: sourceItemData.recommendations || undefined,
+            createdAt: new Date().toISOString(),
+          };
+
+          await agent.api.com.atproto.repo.createRecord({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.listitem',
+            record: newItemRecord as any,
+          });
+        }
+
+        ctx.logger.info(
+          { sourceListUri, newListUri, itemCount: sourceItems.length },
+          'Collection cloned successfully'
+        );
+
+        res.json({
+          success: true,
+          uri: newListUri,
+          cid: newListResponse.data.cid,
+          name: newListRecord.name,
+          description: newListRecord.description,
+          parentListUri: sourceListUri,
+          itemCount: sourceItems.length,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to clone collection');
+        res.status(500).json({ error: 'Failed to clone collection' });
       }
     })
   );
