@@ -4,6 +4,7 @@ import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
 import { Agent } from '@atproto/api';
+import { fetchUserHandles } from '../lib/users';
 
 type Session = { did?: string };
 
@@ -269,6 +270,36 @@ export const createRouter = (ctx: AppContext) => {
         // Get origin for building full URLs
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
 
+        // Get admin agent for fetching user handles and collection names
+        const sessionDid = await getSessionAgent(req, res, ctx);
+        let userHandles = new Map<string, string>();
+        let adminAgentForCollections: Agent | null = null;
+
+        if (sessionDid) {
+          try {
+            const oauthSession = await ctx.oauthClient.restore(sessionDid);
+            if (oauthSession) {
+              const adminAgent = new Agent(oauthSession);
+              adminAgentForCollections = adminAgent;
+
+              // Fetch user handles
+              const uniqueUserDids = [
+                ...new Set(shareLinks.map((link) => link.userDid)),
+              ];
+              userHandles = await fetchUserHandles(
+                adminAgent,
+                uniqueUserDids,
+                ctx.logger
+              );
+            }
+          } catch (err) {
+            ctx.logger.error(
+              { err },
+              'Failed to create admin agent for handle lookup'
+            );
+          }
+        }
+
         // For review shares, fetch the media item titles
         const reviewIds = shareLinks
           .filter((link) => link.reviewId)
@@ -307,42 +338,34 @@ export const createRouter = (ctx: AppContext) => {
         // Fetch collection names for each user
         const collectionNames: Record<string, string> = {};
 
-        // Get the admin's DID and create an agent
-        const adminDid = await getSessionAgent(req, res, ctx);
-        if (adminDid) {
-          try {
-            const oauthSession = await ctx.oauthClient.restore(adminDid);
-            if (oauthSession) {
-              const adminAgent = new Agent(oauthSession);
-
-              for (const [userDid, userLinks] of Object.entries(linksByUser)) {
-                try {
-                  // Use the admin's agent to query other users' public collection data
-                  const listsResponse =
-                    await adminAgent.api.com.atproto.repo.listRecords({
-                      repo: userDid,
-                      collection: 'app.collectivesocial.feed.list',
-                    });
-
-                  for (const link of userLinks) {
-                    const collection = listsResponse.data.records.find(
-                      (record: any) => record.uri === link.collectionUri
-                    );
-                    if (collection && collection.value?.name) {
-                      collectionNames[link.collectionUri!] =
-                        String(collection.value.name) || 'Untitled Collection';
-                    }
+        // Use the admin agent we created earlier to fetch collection names
+        if (adminAgentForCollections) {
+          for (const [userDid, userLinks] of Object.entries(linksByUser)) {
+            try {
+              // Use the admin's agent to query other users' public collection data
+              const listsResponse =
+                await adminAgentForCollections.api.com.atproto.repo.listRecords(
+                  {
+                    repo: userDid,
+                    collection: 'app.collectivesocial.feed.list',
                   }
-                } catch (err) {
-                  ctx.logger.error(
-                    { err, userDid },
-                    'Failed to fetch collection names for admin view'
-                  );
+                );
+
+              for (const link of userLinks) {
+                const collection = listsResponse.data.records.find(
+                  (record: any) => record.uri === link.collectionUri
+                );
+                if (collection && collection.value?.name) {
+                  collectionNames[link.collectionUri!] =
+                    String(collection.value.name) || 'Untitled Collection';
                 }
               }
+            } catch (err) {
+              ctx.logger.error(
+                { err, userDid },
+                'Failed to fetch collection names for admin view'
+              );
             }
-          } catch (err) {
-            ctx.logger.error({ err }, 'Failed to create admin agent');
           }
         }
 
@@ -365,10 +388,13 @@ export const createRouter = (ctx: AppContext) => {
               }
             }
 
+            const userHandle = userHandles.get(link.userDid) || null;
+
             return {
               id: link.id,
               shortCode: link.shortCode,
               userDid: link.userDid,
+              userHandle: userHandle,
               mediaItemId: link.mediaItemId,
               mediaType: link.mediaType,
               collectionUri: link.collectionUri,
@@ -387,7 +413,6 @@ export const createRouter = (ctx: AppContext) => {
           }),
         });
       } catch (err) {
-        ctx.logger.error({ err }, 'Failed to fetch admin share links data');
         res.status(500).json({ error: 'Failed to fetch share links data' });
       }
     })

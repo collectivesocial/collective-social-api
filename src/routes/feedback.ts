@@ -4,6 +4,7 @@ import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
+import { fetchUserHandles } from '../lib/users';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -91,25 +92,23 @@ export const createRouter = (ctx: AppContext) => {
           .execute();
 
         // Lookup handles for users with DIDs
-        const feedbackWithHandles = await Promise.all(
-          feedback.map(async (item) => {
-            let userHandle = null;
-            if (item.userDid) {
-              try {
-                const profile = await agent.getProfile({
-                  actor: item.userDid,
-                });
-                userHandle = profile.data.handle;
-              } catch (err) {
-                ctx.logger.warn(
-                  { did: item.userDid, err },
-                  'Failed to lookup user handle'
-                );
-              }
-            }
-            return { ...item, userHandle };
-          })
+        const uniqueDids = [
+          ...new Set(
+            feedback.filter((item) => item.userDid).map((item) => item.userDid!)
+          ),
+        ];
+        const userHandles = await fetchUserHandles(
+          agent,
+          uniqueDids,
+          ctx.logger
         );
+
+        const feedbackWithHandles = feedback.map((item) => ({
+          ...item,
+          userHandle: item.userDid
+            ? userHandles.get(item.userDid) || null
+            : null,
+        }));
 
         res.json({ feedback: feedbackWithHandles });
       } catch (err) {
