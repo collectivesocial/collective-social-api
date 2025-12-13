@@ -3,6 +3,7 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import { randomBytes } from 'crypto';
+import { config } from '../config';
 
 // Generate a URL-safe random string
 const generateShortCode = (length: number = 10): string => {
@@ -210,7 +211,138 @@ export const createRouter = (ctx: AppContext) => {
         'Share link accessed'
       );
 
-      // Return the share link data with recommender info
+      // Check if request is from a social media crawler or expects HTML
+      const userAgent = req.get('user-agent') || '';
+      const acceptsHtml = req.accepts('html');
+      const isCrawler =
+        /bot|crawler|spider|facebook|twitter|slack|telegram|whatsapp|linkedin|bluesky|atproto/i.test(
+          userAgent
+        );
+
+      // If it's a crawler or browser requesting HTML, serve HTML with Open Graph tags
+      if (acceptsHtml || isCrawler) {
+        // Helper to escape HTML
+        const escapeHtml = (str: string) =>
+          str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+
+        let title = 'Check this out on Collective!';
+        let description = 'Check this out on Collective!';
+        let imageUrl = '';
+
+        // Use production URL if available, otherwise fall back to localhost for dev
+        const publicUrl = config.serviceUrl || 'http://localhost:3000';
+        const frontendUrl = req.get('origin') || 'http://127.0.0.1:5173';
+        const shareUrl = `${publicUrl}/share/${shortCode}`;
+        const itemUrl = `${frontendUrl}/share/${shortCode}`;
+
+        if (shareLink.collectionUri) {
+          // Fetch collection name from ATProto
+          try {
+            // Get the user's agent to fetch their public collection data
+            const oauthSession = await ctx.oauthClient.restore(
+              shareLink.userDid
+            );
+            if (oauthSession) {
+              const { Agent } = await import('@atproto/api');
+              const userAgent = new Agent(oauthSession);
+              const listsResponse =
+                await userAgent.api.com.atproto.repo.listRecords({
+                  repo: shareLink.userDid,
+                  collection: 'app.collectivesocial.feed.list',
+                });
+              const collection = listsResponse.data.records.find(
+                (record: any) => record.uri === shareLink.collectionUri
+              );
+              if (collection?.value?.name) {
+                title = escapeHtml(String(collection.value.name));
+                description = `Check out this collection on Collective!`;
+              } else {
+                title = 'Collection on Collective';
+                description = 'Check out this collection on Collective!';
+              }
+            }
+          } catch (err) {
+            ctx.logger.error(
+              { err },
+              'Failed to fetch collection name for Open Graph'
+            );
+            title = 'Collection on Collective';
+            description = 'Check out this collection on Collective!';
+          }
+        } else if (shareLink.mediaItemId) {
+          // Fetch media item details for Open Graph tags
+          const mediaItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['title', 'creator', 'coverImage'])
+            .where('id', '=', shareLink.mediaItemId)
+            .executeTakeFirst();
+
+          if (mediaItem) {
+            title = escapeHtml(
+              mediaItem.title || 'Check this out on Collective!'
+            );
+            if (mediaItem.creator) {
+              title = `${title} by ${escapeHtml(mediaItem.creator)}`;
+            }
+            imageUrl = mediaItem.coverImage || '';
+          }
+        }
+
+        // Serve HTML with Open Graph meta tags
+        const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${shareUrl}">
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${description}">
+  <meta property="og:site_name" content="Collective">
+  ${
+    imageUrl
+      ? `<meta property="og:image" content="${imageUrl}">
+  <meta property="og:image:alt" content="${title}">`
+      : ''
+  }
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="${shareUrl}">
+  <meta name="twitter:title" content="${title}">
+  <meta name="twitter:description" content="${description}">
+  ${
+    imageUrl
+      ? `<meta name="twitter:image" content="${imageUrl}">
+  <meta name="twitter:image:alt" content="${title}">`
+      : ''
+  }
+  
+  <!-- Redirect to frontend -->
+  <meta http-equiv="refresh" content="0;url=${itemUrl}">
+  <script>
+    window.location.href = "${itemUrl}";
+  </script>
+</head>
+<body>
+  <p>Redirecting to <a href="${itemUrl}">Collective</a>...</p>
+</body>
+</html>
+        `;
+
+        return res.type('html').send(html);
+      }
+
+      // For API requests (JSON), return the share link data
       res.json({
         mediaItemId: shareLink.mediaItemId,
         mediaType: shareLink.mediaType,
