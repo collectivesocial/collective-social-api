@@ -55,6 +55,7 @@ export type ShareLink = {
   mediaItemId: number | null;
   mediaType: string | null;
   collectionUri: string | null;
+  reviewId: number | null;
   timesClicked: Generated<number>;
   createdAt: Date;
   updatedAt: Date;
@@ -962,6 +963,27 @@ migrations['021'] = {
     await sql`ALTER TABLE share_links ALTER COLUMN "mediaType" SET NOT NULL`.execute(
       db
     );
+  },
+};
+
+migrations['022'] = {
+  async up(db: Kysely<unknown>) {
+    // Add reviewId column for sharing specific reviews
+    await db.schema
+      .alterTable('share_links')
+      .addColumn('reviewId', 'integer', (col) => col.defaultTo(null))
+      .execute();
+
+    // Create index for review lookups
+    await db.schema
+      .createIndex('share_links_review_idx')
+      .on('share_links')
+      .column('reviewId')
+      .execute();
+  },
+  async down(db: Kysely<unknown>) {
+    // Drop the reviewId column
+    await db.schema.alterTable('share_links').dropColumn('reviewId').execute();
   },
 };
 

@@ -22,12 +22,22 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { mediaItemId, mediaType, collectionUri } = req.body;
+      const { mediaItemId, mediaType, collectionUri, reviewId } = req.body;
 
-      // Validate: must provide either media item or collection, not both
-      if ((!mediaItemId && !collectionUri) || (mediaItemId && collectionUri)) {
+      // Validate: must provide either media item, collection, or review, not multiple
+      const providedTypes = [mediaItemId, collectionUri, reviewId].filter(
+        Boolean
+      ).length;
+      if (providedTypes === 0) {
         return res.status(400).json({
-          error: 'Provide either mediaItemId and mediaType OR collectionUri',
+          error:
+            'Provide either mediaItemId and mediaType, collectionUri, or reviewId',
+        });
+      }
+      if (providedTypes > 1) {
+        return res.status(400).json({
+          error:
+            'Provide only one of: mediaItemId and mediaType, collectionUri, or reviewId',
         });
       }
 
@@ -45,7 +55,14 @@ export const createRouter = (ctx: AppContext) => {
 
         // Check if a share link already exists
         let existing;
-        if (collectionUri) {
+        if (reviewId) {
+          existing = await ctx.db
+            .selectFrom('share_links')
+            .selectAll()
+            .where('userDid', '=', userDid)
+            .where('reviewId', '=', reviewId)
+            .executeTakeFirst();
+        } else if (collectionUri) {
           existing = await ctx.db
             .selectFrom('share_links')
             .selectAll()
@@ -65,7 +82,16 @@ export const createRouter = (ctx: AppContext) => {
         if (existing) {
           // Get title for response
           let title = null;
-          if (collectionUri) {
+          if (reviewId) {
+            // Get review and media item details
+            const review = await ctx.db
+              .selectFrom('reviews')
+              .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+              .select(['media_items.title'])
+              .where('reviews.id', '=', reviewId)
+              .executeTakeFirst();
+            title = review?.title ? `Review: ${review.title}` : null;
+          } else if (collectionUri) {
             // Fetch collection name from ATProto
             const listsResponse = await agent.api.com.atproto.repo.listRecords({
               repo: agent.did!,
@@ -129,6 +155,7 @@ export const createRouter = (ctx: AppContext) => {
             mediaItemId: mediaItemId || null,
             mediaType: mediaType || null,
             collectionUri: collectionUri || null,
+            reviewId: reviewId || null,
             timesClicked: 0,
             createdAt: now,
             updatedAt: now,
@@ -138,7 +165,16 @@ export const createRouter = (ctx: AppContext) => {
 
         // Get title for response
         let title = null;
-        if (collectionUri) {
+        if (reviewId) {
+          // Get review and media item details
+          const review = await ctx.db
+            .selectFrom('reviews')
+            .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+            .select(['media_items.title'])
+            .where('reviews.id', '=', reviewId)
+            .executeTakeFirst();
+          title = review?.title ? `Review: ${review.title}` : null;
+        } else if (collectionUri) {
           // Fetch collection name from ATProto
           const listsResponse = await agent.api.com.atproto.repo.listRecords({
             repo: agent.did!,
@@ -159,7 +195,14 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         ctx.logger.info(
-          { userDid, mediaItemId, mediaType, collectionUri, shortCode },
+          {
+            userDid,
+            mediaItemId,
+            mediaType,
+            collectionUri,
+            reviewId,
+            shortCode,
+          },
           'Share link created'
         );
 
@@ -240,7 +283,34 @@ export const createRouter = (ctx: AppContext) => {
         const shareUrl = `${publicUrl}/share/${shortCode}`;
         const itemUrl = `${frontendUrl}/share/${shortCode}`;
 
-        if (shareLink.collectionUri) {
+        if (shareLink.reviewId) {
+          // Fetch review and media item details for Open Graph tags
+          const review = await ctx.db
+            .selectFrom('reviews')
+            .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+            .select([
+              'media_items.title',
+              'media_items.creator',
+              'media_items.coverImage',
+              'reviews.review',
+              'reviews.rating',
+            ])
+            .where('reviews.id', '=', shareLink.reviewId)
+            .executeTakeFirst();
+
+          if (review) {
+            title = escapeHtml(review.title || 'Review on Collective');
+            if (review.creator) {
+              title = `${title} by ${escapeHtml(review.creator)}`;
+            }
+            // Use first line of review or rating as description
+            const reviewPreview = review.review
+              ? review.review.split('\n')[0].substring(0, 150)
+              : `${review.rating} star rating`;
+            description = escapeHtml(reviewPreview);
+            imageUrl = review.coverImage || '';
+          }
+        } else if (shareLink.collectionUri) {
           // Fetch collection name from ATProto
           try {
             // Get the user's agent to fetch their public collection data
@@ -343,10 +413,23 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       // For API requests (JSON), return the share link data
+      let responseMediaItemId = shareLink.mediaItemId;
+
+      // If this is a review share, fetch the mediaItemId from the review
+      if (shareLink.reviewId && !responseMediaItemId) {
+        const review = await ctx.db
+          .selectFrom('reviews')
+          .select(['mediaItemId'])
+          .where('id', '=', shareLink.reviewId)
+          .executeTakeFirst();
+        responseMediaItemId = review?.mediaItemId || null;
+      }
+
       res.json({
-        mediaItemId: shareLink.mediaItemId,
+        mediaItemId: responseMediaItemId,
         mediaType: shareLink.mediaType,
         collectionUri: shareLink.collectionUri,
+        reviewId: shareLink.reviewId,
         recommendedBy: shareLink.userDid,
         timesClicked: shareLink.timesClicked + 1,
         createdAt: shareLink.createdAt,
@@ -380,6 +463,7 @@ export const createRouter = (ctx: AppContext) => {
             'share_links.mediaItemId',
             'share_links.mediaType',
             'share_links.collectionUri',
+            'share_links.reviewId',
             'share_links.timesClicked',
             'share_links.createdAt',
             'share_links.updatedAt',
@@ -390,6 +474,27 @@ export const createRouter = (ctx: AppContext) => {
           .where('share_links.userDid', '=', userDid)
           .orderBy('share_links.createdAt', 'desc')
           .execute();
+
+        // For review shares, fetch the media item title from the review
+        const reviewIds = shareLinks
+          .filter((link) => link.reviewId)
+          .map((link) => link.reviewId!);
+
+        const reviewTitles = new Map<number, string>();
+        if (reviewIds.length > 0) {
+          const reviews = await ctx.db
+            .selectFrom('reviews')
+            .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+            .select(['reviews.id', 'media_items.title'])
+            .where('reviews.id', 'in', reviewIds)
+            .execute();
+
+          reviews.forEach((review) => {
+            if (review.title) {
+              reviewTitles.set(review.id, review.title);
+            }
+          });
+        }
 
         // For links with collectionUri, fetch collection names from ATProto
         const listsResponse = await agent.api.com.atproto.repo.listRecords({
@@ -407,8 +512,20 @@ export const createRouter = (ctx: AppContext) => {
             collectionName = collection?.value?.name || null;
           }
 
+          // For review shares, prefix the title with "Review: "
+          let title = link.title;
+          if (link.reviewId && title) {
+            title = `Review: ${title}`;
+          } else if (link.reviewId) {
+            const reviewTitle = reviewTitles.get(link.reviewId);
+            if (reviewTitle) {
+              title = `Review: ${reviewTitle}`;
+            }
+          }
+
           return {
             ...link,
+            title,
             url: `${origin}/share/${link.shortCode}`,
             collectionName,
           };

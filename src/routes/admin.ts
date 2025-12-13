@@ -241,6 +241,7 @@ export const createRouter = (ctx: AppContext) => {
             'share_links.mediaItemId',
             'share_links.mediaType',
             'share_links.collectionUri',
+            'share_links.reviewId',
             'share_links.timesClicked',
             'share_links.createdAt',
             'share_links.updatedAt',
@@ -267,6 +268,27 @@ export const createRouter = (ctx: AppContext) => {
 
         // Get origin for building full URLs
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
+
+        // For review shares, fetch the media item titles
+        const reviewIds = shareLinks
+          .filter((link) => link.reviewId)
+          .map((link) => link.reviewId!);
+
+        const reviewTitles = new Map<number, string>();
+        if (reviewIds.length > 0) {
+          const reviews = await ctx.db
+            .selectFrom('reviews')
+            .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+            .select(['reviews.id', 'media_items.title'])
+            .where('reviews.id', 'in', reviewIds)
+            .execute();
+
+          reviews.forEach((review) => {
+            if (review.title) {
+              reviewTitles.set(review.id, review.title);
+            }
+          });
+        }
 
         // For each link with collectionUri, we need to fetch collection names from users' ATProto repos
         // Group links by userDid to minimize API calls
@@ -331,24 +353,38 @@ export const createRouter = (ctx: AppContext) => {
           totalPages: Math.ceil(totalLinks / limit),
           sortBy,
           order,
-          links: shareLinks.map((link) => ({
-            id: link.id,
-            shortCode: link.shortCode,
-            userDid: link.userDid,
-            mediaItemId: link.mediaItemId,
-            mediaType: link.mediaType,
-            collectionUri: link.collectionUri,
-            collectionName: link.collectionUri
-              ? collectionNames[link.collectionUri] || null
-              : null,
-            timesClicked: link.timesClicked,
-            createdAt: link.createdAt,
-            updatedAt: link.updatedAt,
-            title: link.title,
-            creator: link.creator,
-            coverImage: link.coverImage,
-            url: `${origin}/share/${link.shortCode}`,
-          })),
+          links: shareLinks.map((link) => {
+            // Format title with "Review: " prefix for review shares
+            let title = link.title;
+            if (link.reviewId && title) {
+              title = `Review: ${title}`;
+            } else if (link.reviewId) {
+              const reviewTitle = reviewTitles.get(link.reviewId);
+              if (reviewTitle) {
+                title = `Review: ${reviewTitle}`;
+              }
+            }
+
+            return {
+              id: link.id,
+              shortCode: link.shortCode,
+              userDid: link.userDid,
+              mediaItemId: link.mediaItemId,
+              mediaType: link.mediaType,
+              collectionUri: link.collectionUri,
+              collectionName: link.collectionUri
+                ? collectionNames[link.collectionUri] || null
+                : null,
+              reviewId: link.reviewId,
+              timesClicked: link.timesClicked,
+              createdAt: link.createdAt,
+              updatedAt: link.updatedAt,
+              title: title,
+              creator: link.creator,
+              coverImage: link.coverImage,
+              url: `${origin}/share/${link.shortCode}`,
+            };
+          }),
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch admin share links data');
