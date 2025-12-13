@@ -3,6 +3,7 @@ import { getIronSession } from 'iron-session';
 import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
+import { Agent } from '@atproto/api';
 
 type Session = { did?: string };
 
@@ -239,6 +240,7 @@ export const createRouter = (ctx: AppContext) => {
             'share_links.userDid',
             'share_links.mediaItemId',
             'share_links.mediaType',
+            'share_links.collectionUri',
             'share_links.timesClicked',
             'share_links.createdAt',
             'share_links.updatedAt',
@@ -266,6 +268,62 @@ export const createRouter = (ctx: AppContext) => {
         // Get origin for building full URLs
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
 
+        // For each link with collectionUri, we need to fetch collection names from users' ATProto repos
+        // Group links by userDid to minimize API calls
+        const linksByUser = shareLinks.reduce(
+          (acc, link) => {
+            if (link.collectionUri) {
+              const userDid = link.userDid;
+              if (!acc[userDid]) acc[userDid] = [];
+              acc[userDid].push(link);
+            }
+            return acc;
+          },
+          {} as Record<string, typeof shareLinks>
+        );
+
+        // Fetch collection names for each user
+        const collectionNames: Record<string, string> = {};
+
+        // Get the admin's DID and create an agent
+        const adminDid = await getSessionAgent(req, res, ctx);
+        if (adminDid) {
+          try {
+            const oauthSession = await ctx.oauthClient.restore(adminDid);
+            if (oauthSession) {
+              const adminAgent = new Agent(oauthSession);
+
+              for (const [userDid, userLinks] of Object.entries(linksByUser)) {
+                try {
+                  // Use the admin's agent to query other users' public collection data
+                  const listsResponse =
+                    await adminAgent.api.com.atproto.repo.listRecords({
+                      repo: userDid,
+                      collection: 'app.collectivesocial.feed.list',
+                    });
+
+                  for (const link of userLinks) {
+                    const collection = listsResponse.data.records.find(
+                      (record: any) => record.uri === link.collectionUri
+                    );
+                    if (collection && collection.value?.name) {
+                      collectionNames[link.collectionUri!] =
+                        String(collection.value.name) || 'Untitled Collection';
+                    }
+                  }
+                } catch (err) {
+                  ctx.logger.error(
+                    { err, userDid },
+                    'Failed to fetch collection names for admin view'
+                  );
+                }
+              }
+            }
+          } catch (err) {
+            ctx.logger.error({ err }, 'Failed to create admin agent');
+          }
+        }
+
         res.json({
           totalLinks,
           page,
@@ -279,6 +337,10 @@ export const createRouter = (ctx: AppContext) => {
             userDid: link.userDid,
             mediaItemId: link.mediaItemId,
             mediaType: link.mediaType,
+            collectionUri: link.collectionUri,
+            collectionName: link.collectionUri
+              ? collectionNames[link.collectionUri] || null
+              : null,
             timesClicked: link.timesClicked,
             createdAt: link.createdAt,
             updatedAt: link.updatedAt,

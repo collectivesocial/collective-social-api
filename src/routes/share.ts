@@ -247,6 +247,7 @@ export const createRouter = (ctx: AppContext) => {
             'share_links.shortCode',
             'share_links.mediaItemId',
             'share_links.mediaType',
+            'share_links.collectionUri',
             'share_links.timesClicked',
             'share_links.createdAt',
             'share_links.updatedAt',
@@ -258,11 +259,28 @@ export const createRouter = (ctx: AppContext) => {
           .orderBy('share_links.createdAt', 'desc')
           .execute();
 
-        // Add full URL to each link
-        const linksWithUrls = shareLinks.map((link) => ({
-          ...link,
-          url: `${origin}/share/${link.shortCode}`,
-        }));
+        // For links with collectionUri, fetch collection names from ATProto
+        const listsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.list',
+        });
+
+        // Add full URL and collection names to each link
+        const linksWithUrls = shareLinks.map((link) => {
+          let collectionName = null;
+          if (link.collectionUri) {
+            const collection = listsResponse.data.records.find(
+              (record: any) => record.uri === link.collectionUri
+            );
+            collectionName = collection?.value?.name || null;
+          }
+
+          return {
+            ...link,
+            url: `${origin}/share/${link.shortCode}`,
+            collectionName,
+          };
+        });
 
         res.json({ links: linksWithUrls });
       } catch (err) {
