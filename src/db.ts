@@ -52,8 +52,9 @@ export type ShareLink = {
   id: Generated<number>;
   shortCode: string;
   userDid: string;
-  mediaItemId: number;
-  mediaType: string;
+  mediaItemId: number | null;
+  mediaType: string | null;
+  collectionUri: string | null;
   timesClicked: Generated<number>;
   createdAt: Date;
   updatedAt: Date;
@@ -921,6 +922,46 @@ migrations['020'] = {
   },
   async down(db: Kysely<unknown>) {
     await db.schema.alterTable('media_items').dropColumn('createdBy').execute();
+  },
+};
+
+migrations['021'] = {
+  async up(db: Kysely<unknown>) {
+    // Add collectionUri column for sharing collections
+    await db.schema
+      .alterTable('share_links')
+      .addColumn('collectionUri', 'varchar', (col) => col.defaultTo(null))
+      .execute();
+
+    // Create index for collection lookups
+    await db.schema
+      .createIndex('share_links_collection_idx')
+      .on('share_links')
+      .column('collectionUri')
+      .execute();
+
+    // Drop NOT NULL constraints using raw SQL (execute directly on db, not schema)
+    await sql`ALTER TABLE share_links ALTER COLUMN "mediaItemId" DROP NOT NULL`.execute(
+      db
+    );
+    await sql`ALTER TABLE share_links ALTER COLUMN "mediaType" DROP NOT NULL`.execute(
+      db
+    );
+  },
+  async down(db: Kysely<unknown>) {
+    // Drop the collectionUri column
+    await db.schema
+      .alterTable('share_links')
+      .dropColumn('collectionUri')
+      .execute();
+
+    // Restore NOT NULL constraints
+    await sql`ALTER TABLE share_links ALTER COLUMN "mediaItemId" SET NOT NULL`.execute(
+      db
+    );
+    await sql`ALTER TABLE share_links ALTER COLUMN "mediaType" SET NOT NULL`.execute(
+      db
+    );
   },
 };
 

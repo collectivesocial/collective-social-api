@@ -12,7 +12,7 @@ const generateShortCode = (length: number = 10): string => {
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
 
-  // POST /share - Create a share link for a media item
+  // POST /share - Create a share link for a media item or collection
   router.post(
     '/',
     handler(async (req: Request, res: Response) => {
@@ -21,11 +21,18 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { mediaItemId, mediaType } = req.body;
+      const { mediaItemId, mediaType, collectionUri } = req.body;
 
-      if (!mediaItemId || !mediaType) {
+      // Validate: must provide either media item or collection, not both
+      if ((!mediaItemId && !collectionUri) || (mediaItemId && collectionUri)) {
         return res.status(400).json({
-          error: 'mediaItemId and mediaType are required',
+          error: 'Provide either mediaItemId and mediaType OR collectionUri',
+        });
+      }
+
+      if (mediaItemId && !mediaType) {
+        return res.status(400).json({
+          error: 'mediaType is required when sharing a media item',
         });
       }
 
@@ -35,29 +42,54 @@ export const createRouter = (ctx: AppContext) => {
         // Get the client URL from Origin header or fallback to localhost
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
 
-        // Check if a share link already exists for this user and media item
-        const existing = await ctx.db
-          .selectFrom('share_links')
-          .selectAll()
-          .where('userDid', '=', userDid)
-          .where('mediaItemId', '=', mediaItemId)
-          .where('mediaType', '=', mediaType)
-          .executeTakeFirst();
+        // Check if a share link already exists
+        let existing;
+        if (collectionUri) {
+          existing = await ctx.db
+            .selectFrom('share_links')
+            .selectAll()
+            .where('userDid', '=', userDid)
+            .where('collectionUri', '=', collectionUri)
+            .executeTakeFirst();
+        } else {
+          existing = await ctx.db
+            .selectFrom('share_links')
+            .selectAll()
+            .where('userDid', '=', userDid)
+            .where('mediaItemId', '=', mediaItemId)
+            .where('mediaType', '=', mediaType)
+            .executeTakeFirst();
+        }
 
         if (existing) {
-          // Get media item details
-          const mediaItem = await ctx.db
-            .selectFrom('media_items')
-            .select(['title'])
-            .where('id', '=', mediaItemId)
-            .executeTakeFirst();
+          // Get title for response
+          let title = null;
+          if (collectionUri) {
+            // Fetch collection name from ATProto
+            const listsResponse = await agent.api.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.list',
+            });
+            const collection = listsResponse.data.records.find(
+              (record: any) => record.uri === collectionUri
+            );
+            title = collection?.value?.name || null;
+          } else {
+            // Get media item details
+            const mediaItem = await ctx.db
+              .selectFrom('media_items')
+              .select(['title'])
+              .where('id', '=', mediaItemId)
+              .executeTakeFirst();
+            title = mediaItem?.title || null;
+          }
 
           // Return existing share link
           return res.json({
             shortCode: existing.shortCode,
             url: `${origin}/share/${existing.shortCode}`,
             timesClicked: existing.timesClicked,
-            title: mediaItem?.title || null,
+            title,
           });
         }
 
@@ -93,24 +125,40 @@ export const createRouter = (ctx: AppContext) => {
           .values({
             shortCode,
             userDid,
-            mediaItemId,
-            mediaType,
+            mediaItemId: mediaItemId || null,
+            mediaType: mediaType || null,
+            collectionUri: collectionUri || null,
             timesClicked: 0,
             createdAt: now,
             updatedAt: now,
-          })
+          } as any)
           .returningAll()
           .executeTakeFirstOrThrow();
 
-        // Get media item details
-        const mediaItem = await ctx.db
-          .selectFrom('media_items')
-          .select(['title'])
-          .where('id', '=', mediaItemId)
-          .executeTakeFirst();
+        // Get title for response
+        let title = null;
+        if (collectionUri) {
+          // Fetch collection name from ATProto
+          const listsResponse = await agent.api.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.list',
+          });
+          const collection = listsResponse.data.records.find(
+            (record: any) => record.uri === collectionUri
+          );
+          title = collection?.value?.name || null;
+        } else {
+          // Get media item details
+          const mediaItem = await ctx.db
+            .selectFrom('media_items')
+            .select(['title'])
+            .where('id', '=', mediaItemId)
+            .executeTakeFirst();
+          title = mediaItem?.title || null;
+        }
 
         ctx.logger.info(
-          { userDid, mediaItemId, mediaType, shortCode },
+          { userDid, mediaItemId, mediaType, collectionUri, shortCode },
           'Share link created'
         );
 
@@ -118,7 +166,7 @@ export const createRouter = (ctx: AppContext) => {
           shortCode: shareLink.shortCode,
           url: `${origin}/share/${shareLink.shortCode}`,
           timesClicked: shareLink.timesClicked,
-          title: mediaItem?.title || null,
+          title,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create share link');
@@ -166,6 +214,7 @@ export const createRouter = (ctx: AppContext) => {
       res.json({
         mediaItemId: shareLink.mediaItemId,
         mediaType: shareLink.mediaType,
+        collectionUri: shareLink.collectionUri,
         recommendedBy: shareLink.userDid,
         timesClicked: shareLink.timesClicked + 1,
         createdAt: shareLink.createdAt,
