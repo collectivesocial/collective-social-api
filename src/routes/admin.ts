@@ -93,40 +93,41 @@ export const createRouter = (ctx: AppContext) => {
           .limit(10)
           .execute();
 
-        // Fetch handles for each user
-        const usersWithHandles = await Promise.all(
-          users.map(async (user) => {
-            try {
-              const response = await fetch(
-                `https://public.api.bsky.app/xrpc/com.atproto.repo.describeRepo?repo=${user.did}`
-              );
-              if (response.ok) {
-                const data = (await response.json()) as any;
-                return {
-                  did: user.did,
-                  handle: data.handle || null,
-                  firstLoginAt: user.firstLoginAt,
-                  lastActivityAt: user.lastActivityAt,
-                  isAdmin: user.isAdmin,
-                  createdAt: user.createdAt,
-                };
-              }
-            } catch (err) {
-              ctx.logger.error(
-                { err, did: user.did },
-                'Failed to fetch handle for user'
+        // Get admin agent for fetching user handles
+        const sessionDid = await getSessionAgent(req, res, ctx);
+        let userHandles = new Map<string, string>();
+
+        if (sessionDid) {
+          try {
+            const oauthSession = await ctx.oauthClient.restore(sessionDid);
+            if (oauthSession) {
+              const adminAgent = new Agent(oauthSession);
+
+              // Fetch user handles
+              const userDids = users.map((user) => user.did);
+              userHandles = await fetchUserHandles(
+                adminAgent,
+                userDids,
+                ctx.logger
               );
             }
-            return {
-              did: user.did,
-              handle: null,
-              firstLoginAt: user.firstLoginAt,
-              lastActivityAt: user.lastActivityAt,
-              isAdmin: user.isAdmin,
-              createdAt: user.createdAt,
-            };
-          })
-        );
+          } catch (err) {
+            ctx.logger.error(
+              { err },
+              'Failed to create admin agent for handle lookup'
+            );
+          }
+        }
+
+        // Map handles to users
+        const usersWithHandles = users.map((user) => ({
+          did: user.did,
+          handle: userHandles.get(user.did) || null,
+          firstLoginAt: user.firstLoginAt,
+          lastActivityAt: user.lastActivityAt,
+          isAdmin: user.isAdmin,
+          createdAt: user.createdAt,
+        }));
 
         res.json({
           totalUsers,
