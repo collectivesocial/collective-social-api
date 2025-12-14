@@ -531,6 +531,7 @@ export const createRouter = (ctx: AppContext) => {
                     totalReviews: mediaItem.totalReviews,
                     totalSaves: mediaItem.totalSaves,
                     averageRating: mediaItem.averageRating,
+                    url: mediaItem.url,
                   };
                 }
               }

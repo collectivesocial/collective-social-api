@@ -552,6 +552,7 @@ export const createRouter = (ctx: AppContext) => {
             rating4_5: item.rating4_5,
             rating5: item.rating5,
           },
+          url: item.url || null,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch media item');

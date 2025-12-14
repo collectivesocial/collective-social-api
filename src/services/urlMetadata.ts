@@ -1,13 +1,66 @@
 import { load } from 'cheerio';
 
 /**
- * Normalize URL by removing query parameters and fragments
+ * List of query parameters that should be removed during URL normalization
+ * These are typically tracking/analytics parameters that don't affect content
+ */
+const PARAMS_TO_REMOVE = [
+  // UTM parameters (marketing/analytics)
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'utm_id',
+
+  // Facebook/Meta tracking
+  'fbclid',
+  'fb_action_ids',
+  'fb_action_types',
+  'fb_ref',
+  'fb_source',
+
+  // Google/DoubleClick tracking
+  'gclid',
+  'dclid',
+  'gclsrc',
+
+  // Twitter tracking
+  'twclid',
+
+  // Microsoft/Bing tracking
+  'msclkid',
+
+  // Other common tracking params
+  'ref',
+  'referrer',
+  '_ga',
+  'mc_cid',
+  'mc_eid',
+
+  // Session/cache busting (usually not content-specific)
+  '_',
+  'nocache',
+];
+
+/**
+ * Normalize URL by removing tracking parameters and fragments
+ * Preserves all query parameters except known tracking ones
  */
 export function normalizeUrl(url: string): string {
   try {
     const urlObj = new URL(url);
-    // Keep protocol, hostname, and pathname only
-    return `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname}`;
+
+    // Remove tracking parameters
+    PARAMS_TO_REMOVE.forEach((param) => {
+      urlObj.searchParams.delete(param);
+    });
+
+    // Remove fragment
+    urlObj.hash = '';
+
+    // Return the cleaned URL
+    return urlObj.toString();
   } catch (err) {
     // If URL parsing fails, return original
     return url;
