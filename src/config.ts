@@ -21,4 +21,6 @@ export const config = {
   openLibraryUserAgent:
     process.env.OPENLIBRARY_USER_AGENT ||
     'CollectiveSocial.app/1.0 (brittany@balancedengineer.com)',
+  openSocialApiUrl: process.env.OPENSOCIAL_API_URL || 'http://127.0.0.1:3001',
+  openSocialApiKey: process.env.OPENSOCIAL_API_KEY || '',
 } as const;

@@ -12,6 +12,7 @@ import { createRouter as createReviewSegmentsRouter } from './routes/reviewSegme
 import { createRouter as createTagsRouter } from './routes/tags';
 import { createRouter as createCommentsRouter } from './routes/comments';
 import { createRouter as createReactionsRouter } from './routes/reactions';
+import { createRouter as createGroupsRouter } from './routes/groups';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
@@ -69,6 +70,9 @@ createAppContext().then((ctx) => {
 
   // Mount reactions routes
   app.use('/reactions', createReactionsRouter(ctx));
+
+  // Mount groups routes (powered by OpenSocial)
+  app.use('/groups', createGroupsRouter(ctx));
 
   // Root route - redirect to React app
   app.get('/', (req, res) => {
