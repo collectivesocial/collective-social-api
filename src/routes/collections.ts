@@ -695,6 +695,45 @@ export const createRouter = (ctx: AppContext) => {
             record: updatedRecord as any,
           });
 
+          // Sync status across all list items with the same mediaItemId
+          const newStatus = status || existingData.status;
+          if (newStatus !== oldStatus && mediaItemId) {
+            const otherItems = existingItemsResponse.data.records.filter(
+              (record: any) =>
+                record.uri !== existingItem.uri &&
+                record.value.mediaItemId === mediaItemId
+            );
+
+            for (const otherItem of otherItems) {
+              const otherData = otherItem.value as any;
+              if (otherData.status === newStatus) continue;
+
+              const otherRkeyMatch = otherItem.uri.match(/\/([^\/]+)$/);
+              if (!otherRkeyMatch) continue;
+              const otherRkey = otherRkeyMatch[1];
+
+              const syncedRecord: AppCollectiveSocialFeedListitem.Record = {
+                ...otherData,
+                status: newStatus,
+                completedAt: completedAtValue,
+              };
+
+              try {
+                await agent.api.com.atproto.repo.putRecord({
+                  repo: agent.did!,
+                  collection: 'app.collectivesocial.feed.listitem',
+                  rkey: otherRkey,
+                  record: syncedRecord as any,
+                });
+              } catch (err) {
+                ctx.logger.error(
+                  { err, uri: otherItem.uri },
+                  'Failed to sync status to other list item'
+                );
+              }
+            }
+          }
+
           // Handle review database update
           if (
             review !== undefined &&
@@ -1316,10 +1355,19 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
+        // Determine completedAt value
+        let completedAtValue = currentData.completedAt;
+        if (status === 'completed' && !currentData.completedAt) {
+          completedAtValue = new Date().toISOString();
+        } else if (status && status !== 'completed') {
+          completedAtValue = undefined;
+        }
+
         // Update the record (status can be updated, rating/review/notes handled separately)
         const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
           ...currentData,
           ...(status !== undefined && { status }),
+          ...(status !== undefined && { completedAt: completedAtValue }),
         };
 
         await agent.api.com.atproto.repo.putRecord({
@@ -1328,6 +1376,45 @@ export const createRouter = (ctx: AppContext) => {
           rkey: rkey,
           record: updatedRecord as any,
         });
+
+        // Sync status across all list items with the same mediaItemId
+        if (status !== undefined && mediaItemId) {
+          const otherItems = itemsResponse.data.records.filter(
+            (record: any) =>
+              record.uri !== itemUri &&
+              record.value.mediaItemId === mediaItemId
+          );
+
+          for (const otherItem of otherItems) {
+            const otherData = otherItem.value as any;
+            // Only update if status actually differs
+            if (otherData.status === status) continue;
+
+            const otherRkeyMatch = otherItem.uri.match(/\/([^\/]+)$/);
+            if (!otherRkeyMatch) continue;
+            const otherRkey = otherRkeyMatch[1];
+
+            const syncedRecord: AppCollectiveSocialFeedListitem.Record = {
+              ...otherData,
+              status,
+              completedAt: completedAtValue,
+            };
+
+            try {
+              await agent.api.com.atproto.repo.putRecord({
+                repo: agent.did!,
+                collection: 'app.collectivesocial.feed.listitem',
+                rkey: otherRkey,
+                record: syncedRecord as any,
+              });
+            } catch (err) {
+              ctx.logger.error(
+                { err, uri: otherItem.uri },
+                'Failed to sync status to other list item'
+              );
+            }
+          }
+        }
 
         // If public review is provided/updated with rating and mediaItemId, upsert to database
         if (review !== undefined && rating !== undefined && mediaItemId) {

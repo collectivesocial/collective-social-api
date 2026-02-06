@@ -17,12 +17,32 @@ export const createRouter = (ctx: AppContext) => {
       try {
         const communities = await opensocial.listCommunities(userDid);
 
+        // If user is authenticated, check which communities they're a member of
+        const memberCommunityDids = new Set<string>();
+        if (agent) {
+          try {
+            const membershipsResponse = await agent.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: 'community.opensocial.membership',
+            });
+            for (const record of membershipsResponse.data.records) {
+              const value = record.value as { community?: string };
+              if (value.community) {
+                memberCommunityDids.add(value.community);
+              }
+            }
+          } catch (err) {
+            console.warn('Could not fetch user memberships:', err);
+          }
+        }
+
         // display_name comes from the list endpoint directly;
         // description is only available on the detail view.
         const result = communities.map((community) => ({
           ...community,
           display_name: community.display_name || null,
           description: null,
+          is_member: memberCommunityDids.has(community.did),
         }));
 
         return res.json({ communities: result });
