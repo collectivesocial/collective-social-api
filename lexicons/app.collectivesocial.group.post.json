@@ -1,0 +1,54 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.post",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A discussion post within a community, optionally linked to a segment or list item. Supports threaded replies via parentPostUri. Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["text", "authorDid", "createdAt"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 5000,
+            "description": "The post content"
+          },
+          "segmentUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.segment this post discusses"
+          },
+          "listItemUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.listitem this post discusses (when not tied to a specific segment)"
+          },
+          "parentPostUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the parent post (for threaded replies)"
+          },
+          "authorDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the member who wrote this post"
+          },
+          "mentionedDids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "did"
+            },
+            "description": "DIDs of members mentioned in this post (for notifications)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

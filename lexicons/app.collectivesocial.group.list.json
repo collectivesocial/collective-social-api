@@ -1,0 +1,46 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.list",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A shared list owned by a community (e.g. a book club reading list). Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["name", "createdBy", "createdAt"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "Display name of the list"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1024,
+            "description": "Optional description of the list"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": ["book-club", "watchlist", "playlist", "general"],
+            "description": "The purpose or type of the list"
+          },
+          "segmentType": {
+            "type": "string",
+            "enum": ["pages", "percent", "chapters"],
+            "description": "How reading/watching segments are measured for items in this list"
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the member who created this list"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

@@ -74,7 +74,8 @@ export const createRouter = (ctx: AppContext) => {
             const membership = await opensocial.checkMembership(did, userDid);
             isMember = membership.is_member;
             isAdmin = membership.is_admin;
-          } catch {
+          } catch (memberErr: any) {
+            console.error(`Membership check failed for ${did}:`, memberErr.message || memberErr);
             // Not a member or check failed — that's fine for public view
           }
         }

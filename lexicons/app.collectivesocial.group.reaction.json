@@ -1,0 +1,49 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.reaction",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An emoji reaction on a community post. Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["postUri", "emoji", "authorDid", "createdAt"],
+        "properties": {
+          "postUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.post being reacted to"
+          },
+          "emoji": {
+            "type": "string",
+            "enum": [
+              "joy",
+              "heart",
+              "grin",
+              "sob",
+              "scream",
+              "upside_down",
+              "smirk",
+              "thumbsup",
+              "thumbsdown",
+              "fire",
+              "100",
+              "thinking"
+            ],
+            "description": "The emoji reaction"
+          },
+          "authorDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the member who reacted"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.segment",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A reading/watching assignment segment for a list item (e.g. chapters 1-3 due by Feb 14). Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["listItemUri", "label", "createdBy", "createdAt"],
+        "properties": {
+          "listItemUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.listitem this segment belongs to"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Human-readable label for this segment (e.g. 'Chapters 1-3', 'Act I')"
+          },
+          "segmentType": {
+            "type": "string",
+            "enum": ["pages", "percent", "chapters"],
+            "description": "How this segment is measured"
+          },
+          "startPage": {
+            "type": "integer",
+            "description": "Start page number (when segmentType is 'pages')"
+          },
+          "endPage": {
+            "type": "integer",
+            "description": "End page number (when segmentType is 'pages')"
+          },
+          "startPercent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Start percentage (when segmentType is 'percent')"
+          },
+          "endPercent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "End percentage (when segmentType is 'percent')"
+          },
+          "startChapter": {
+            "type": "integer",
+            "description": "Start chapter number (when segmentType is 'chapters')"
+          },
+          "endChapter": {
+            "type": "integer",
+            "description": "End chapter number (when segmentType is 'chapters')"
+          },
+          "assignedDate": {
+            "type": "string",
+            "format": "datetime",
+            "description": "The date by which this segment should be completed"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Sort order within the list item"
+          },
+          "createdBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the admin who created this segment"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

@@ -108,7 +108,7 @@ export const createRouter = (ctx: AppContext) => {
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.list',
+        'app.collectivesocial.group.list',
         { name, description, purpose, segmentType, createdBy: userDid, createdAt: now }
       );
 
@@ -172,7 +172,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.updateCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.list',
+        'app.collectivesocial.group.list',
         list.rkey,
         {
           name: name ?? list.name,
@@ -228,7 +228,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.deleteCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.list',
+        'app.collectivesocial.group.list',
         list.rkey
       );
 
@@ -313,7 +313,7 @@ export const createRouter = (ctx: AppContext) => {
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.listitem',
+        'app.collectivesocial.group.listitem',
         {
           listUri: list.uri,
           title,
@@ -400,7 +400,7 @@ export const createRouter = (ctx: AppContext) => {
         const result = await opensocial.updateCommunityRecord(
           communityDid,
           userDid,
-          'community.opensocial.listitem.status',
+          'app.collectivesocial.group.listitem.status',
           statusRkey,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
@@ -409,7 +409,7 @@ export const createRouter = (ctx: AppContext) => {
         const result = await opensocial.createCommunityRecord(
           communityDid,
           userDid,
-          'community.opensocial.listitem.status',
+          'app.collectivesocial.group.listitem.status',
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
@@ -459,7 +459,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.deleteCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.listitem',
+        'app.collectivesocial.group.listitem',
         item.rkey
       );
 
@@ -590,7 +590,7 @@ export const createRouter = (ctx: AppContext) => {
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.segment',
+        'app.collectivesocial.group.segment',
         {
           listItemUri: item.uri,
           label,
@@ -678,7 +678,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.updateCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.segment',
+        'app.collectivesocial.group.segment',
         segment.rkey,
         {
           listItemUri: segment.listItemUri,
@@ -744,7 +744,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.deleteCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.segment',
+        'app.collectivesocial.group.segment',
         segment.rkey
       );
 
@@ -897,7 +897,7 @@ export const createRouter = (ctx: AppContext) => {
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.post',
+        'app.collectivesocial.group.post',
         {
           text,
           segmentUri,
@@ -1001,7 +1001,7 @@ export const createRouter = (ctx: AppContext) => {
       await opensocial.deleteCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.post',
+        'app.collectivesocial.group.post',
         post.rkey
       );
 
@@ -1091,7 +1091,7 @@ export const createRouter = (ctx: AppContext) => {
         await opensocial.deleteCommunityRecord(
           communityDid,
           userDid,
-          'community.opensocial.reaction',
+          'app.collectivesocial.group.reaction',
           existing.rkey
         );
 
@@ -1108,7 +1108,7 @@ export const createRouter = (ctx: AppContext) => {
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'community.opensocial.reaction',
+        'app.collectivesocial.group.reaction',
         { postUri: post.uri, emoji, authorDid: userDid, createdAt: now }
       );
 

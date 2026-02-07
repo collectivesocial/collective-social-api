@@ -1,0 +1,63 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.listitem",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An item on a community list, linking to a media item. Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["listUri", "title", "mediaType", "addedBy", "createdAt"],
+        "properties": {
+          "listUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.list this item belongs to"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "Title of the media item"
+          },
+          "creator": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Author/creator of the media item"
+          },
+          "mediaItemId": {
+            "type": "integer",
+            "description": "ID of the media item in the Collective Social database"
+          },
+          "mediaType": {
+            "type": "string",
+            "enum": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "video"
+            ],
+            "description": "Type of media"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Sort order within the list"
+          },
+          "addedBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the member who added this item"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

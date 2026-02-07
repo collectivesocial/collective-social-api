@@ -1,0 +1,36 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.listitem.status",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Tracks the group-level status of a list item (e.g. the current book being read). Only admins can set this. Stored in the community's PDS repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["listItemUri", "status", "updatedBy", "updatedAt"],
+        "properties": {
+          "listItemUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.listitem this status applies to"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["not-started", "in-progress", "completed"],
+            "description": "The group reading/watching status for this item"
+          },
+          "updatedBy": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the admin who set this status"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}
