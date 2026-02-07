@@ -3,6 +3,7 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import * as opensocial from '../services/opensocial';
+import { rkeyFromUri } from '../services/opensocial';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -80,22 +81,31 @@ export const createRouter = (ctx: AppContext) => {
           }
         }
 
-        // Fetch group lists from Postgres index (public data)
-        const lists = await ctx.db
-          .selectFrom('group_lists')
-          .selectAll()
-          .where('communityDid', '=', did)
-          .orderBy('createdAt', 'desc')
-          .execute();
+        // Fetch group lists from PDS (source of truth)
+        const COL_LIST = 'app.collectivesocial.group.list';
+        const COL_LISTITEM = 'app.collectivesocial.group.listitem';
+        const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
+
+        const listRecords = await opensocial.listAllCommunityRecords(did, COL_LIST);
+        const lists = listRecords
+          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
+          .sort((a: any, b: any) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
 
         // Fetch in-progress items across all lists
-        const inProgressItems = await ctx.db
-          .selectFrom('group_list_items')
-          .selectAll()
-          .where('communityDid', '=', did)
-          .where('status', '=', 'in-progress')
-          .orderBy('updatedAt', 'desc')
-          .execute();
+        const [allItems, allStatuses] = await Promise.all([
+          opensocial.listAllCommunityRecords(did, COL_LISTITEM),
+          opensocial.listAllCommunityRecords(did, COL_LISTITEM_STATUS),
+        ]);
+        const inProgressItemUris = new Set(
+          allStatuses
+            .filter((s: any) => s.value.status === 'in-progress')
+            .map((s: any) => s.value.listItemUri as string)
+        );
+        const inProgressItems = allItems
+          .filter((r) => inProgressItemUris.has(r.uri))
+          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value, status: 'in-progress' }));
 
         // Get member count
         let memberCount = 0;

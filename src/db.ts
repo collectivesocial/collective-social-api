@@ -7,11 +7,6 @@ import { List, ListItem } from './models/list';
 import { MediaItem } from './models/media';
 import { User } from './models/user';
 import {
-  GroupList,
-  GroupListItem,
-  GroupSegment,
-  GroupPost,
-  GroupReaction,
   GroupNotification,
 } from './models/groupContent';
 import {
@@ -131,11 +126,6 @@ export type DatabaseSchema = {
   tag_reports: TagReport;
   comments: PublicComment;
   reactions: Reaction;
-  group_lists: GroupList;
-  group_list_items: GroupListItem;
-  group_segments: GroupSegment;
-  group_posts: GroupPost;
-  group_reactions: GroupReaction;
   group_notifications: GroupNotification;
 };
 
@@ -1156,6 +1146,103 @@ migrations['024'] = {
     await db.schema.dropTable('group_segments').execute();
     await db.schema.dropTable('group_list_items').execute();
     await db.schema.dropTable('group_lists').execute();
+  },
+};
+
+// Migration 025: Drop group content index tables (data now lives exclusively on PDS)
+migrations['025'] = {
+  async up(db: Kysely<unknown>) {
+    // Order matters due to foreign key constraints
+    await db.schema.dropTable('group_reactions').ifExists().execute();
+    await db.schema.dropTable('group_posts').ifExists().execute();
+    await db.schema.dropTable('group_segments').ifExists().execute();
+    await db.schema.dropTable('group_list_items').ifExists().execute();
+    await db.schema.dropTable('group_lists').ifExists().execute();
+  },
+  async down(db: Kysely<unknown>) {
+    // Re-create tables if rolling back (same as migration 024's create logic minus notifications)
+    await db.schema
+      .createTable('group_lists')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('name', 'varchar(255)', (col) => col.notNull())
+      .addColumn('description', 'text')
+      .addColumn('purpose', 'varchar(50)')
+      .addColumn('segmentType', 'varchar(50)')
+      .addColumn('createdBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+    await db.schema
+      .createTable('group_list_items')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('listId', 'integer', (col) => col.notNull().references('group_lists.id').onDelete('cascade'))
+      .addColumn('listUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('title', 'varchar(500)', (col) => col.notNull())
+      .addColumn('creator', 'varchar(255)')
+      .addColumn('mediaItemId', 'integer')
+      .addColumn('mediaType', 'varchar(50)', (col) => col.notNull())
+      .addColumn('order', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('status', 'varchar(50)', (col) => col.notNull().defaultTo('not-started'))
+      .addColumn('statusUri', 'varchar(512)')
+      .addColumn('addedBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+    await db.schema
+      .createTable('group_segments')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('listItemId', 'integer', (col) => col.notNull().references('group_list_items.id').onDelete('cascade'))
+      .addColumn('listItemUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('label', 'varchar(255)', (col) => col.notNull())
+      .addColumn('segmentType', 'varchar(50)')
+      .addColumn('startPage', 'integer')
+      .addColumn('endPage', 'integer')
+      .addColumn('startPercent', 'integer')
+      .addColumn('endPercent', 'integer')
+      .addColumn('startChapter', 'integer')
+      .addColumn('endChapter', 'integer')
+      .addColumn('assignedDate', 'date')
+      .addColumn('order', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('createdBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+    await db.schema
+      .createTable('group_posts')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('text', 'text', (col) => col.notNull())
+      .addColumn('segmentUri', 'varchar(512)')
+      .addColumn('segmentId', 'integer')
+      .addColumn('listItemUri', 'varchar(512)')
+      .addColumn('listItemId', 'integer')
+      .addColumn('parentPostUri', 'varchar(512)')
+      .addColumn('parentPostId', 'integer')
+      .addColumn('authorDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+    await db.schema
+      .createTable('group_reactions')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('postId', 'integer', (col) => col.notNull().references('group_posts.id').onDelete('cascade'))
+      .addColumn('postUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('emoji', 'varchar(50)', (col) => col.notNull())
+      .addColumn('authorDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
   },
 };
 

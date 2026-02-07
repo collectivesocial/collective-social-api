@@ -2,11 +2,15 @@
  * Group content routes — lists, items, segments, posts, reactions
  * for community book clubs and shared reading lists.
  *
+ * All data lives on the community's PDS repo (source of truth).
+ * Records are addressed by AT-URI / rkey, not integer IDs.
+ * Notifications are the only thing stored in Postgres.
+ *
  * All routes are mounted at /groups/:communityDid/...
  * and require authenticated membership via the groupAuth middleware.
  */
 
-import express, { Request, Response } from 'express';
+import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
@@ -15,11 +19,22 @@ import {
   GroupAuthRequest,
 } from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
+import { rkeyFromUri } from '../services/opensocial';
+import type { PdsRecord } from '../services/opensocial';
 import {
   createNotification,
   notifyAllMembers,
   notifyUsers,
 } from '../services/notifications';
+
+// ── Collection constants ──────────────────────────────────────────
+
+const COL_LIST = 'app.collectivesocial.group.list';
+const COL_LISTITEM = 'app.collectivesocial.group.listitem';
+const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
+const COL_SEGMENT = 'app.collectivesocial.group.segment';
+const COL_POST = 'app.collectivesocial.group.post';
+const COL_REACTION = 'app.collectivesocial.group.reaction';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router({ mergeParams: true });
@@ -33,7 +48,7 @@ export const createRouter = (ctx: AppContext) => {
 
   /**
    * GET /groups/:communityDid/lists
-   * List all shared lists for a community.
+   * List all shared lists for a community (from PDS).
    */
   router.get(
     '/lists',
@@ -41,47 +56,63 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
 
-      const lists = await ctx.db
-        .selectFrom('group_lists')
-        .selectAll()
-        .where('communityDid', '=', communityDid)
-        .orderBy('createdAt', 'desc')
-        .execute();
+      const records = await opensocial.listAllCommunityRecords(communityDid, COL_LIST);
+      const lists = records
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
+        .sort((a: any, b: any) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
 
       return res.json({ lists });
     })
   );
 
   /**
-   * GET /groups/:communityDid/lists/:listId
-   * Get a single list with its items.
+   * GET /groups/:communityDid/lists/:rkey
+   * Get a single list with its items (from PDS).
    */
   router.get(
-    '/lists/:listId',
+    '/lists/:rkey',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const listId = Number(req.params.listId);
+      const { rkey } = req.params;
 
-      const list = await ctx.db
-        .selectFrom('group_lists')
-        .selectAll()
-        .where('id', '=', listId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!list) {
+      let list: PdsRecord;
+      try {
+        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+      } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      const items = await ctx.db
-        .selectFrom('group_list_items')
-        .selectAll()
-        .where('listId', '=', listId)
-        .orderBy('order', 'asc')
-        .execute();
+      // Fetch all items and filter by this list's URI
+      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const items = allItems
+        .filter((r: any) => r.value.listUri === list.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
-      return res.json({ list, items });
+      // Fetch status records to enrich items
+      const allStatuses = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM_STATUS);
+      const statusByItemUri = new Map<string, any>();
+      for (const s of allStatuses) {
+        statusByItemUri.set(s.value.listItemUri as string, s.value);
+      }
+
+      const enrichedItems = items.map((item: any) => {
+        const status = statusByItemUri.get(
+          item.uri || `at://${communityDid}/${COL_LISTITEM}/${item.rkey}`
+        );
+        return {
+          ...item,
+          status: status?.status ?? 'not-started',
+        };
+      });
+
+      return res.json({
+        list: { uri: list.uri, rkey: rkeyFromUri(list.uri), ...list.value },
+        items: enrichedItems,
+      });
     })
   );
 
@@ -104,33 +135,12 @@ export const createRouter = (ctx: AppContext) => {
 
       const now = new Date().toISOString();
 
-      // Write to community PDS
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'app.collectivesocial.group.list',
+        COL_LIST,
         { name, description, purpose, segmentType, createdBy: userDid, createdAt: now }
       );
-
-      const rkey = pdsRecord.uri.split('/').pop()!;
-
-      // Index in Postgres
-      const inserted = await ctx.db
-        .insertInto('group_lists')
-        .values({
-          uri: pdsRecord.uri,
-          rkey,
-          communityDid,
-          name,
-          description: description || null,
-          purpose: purpose || null,
-          segmentType: segmentType || null,
-          createdBy: userDid,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
 
       // Notify members
       await notifyAllMembers(ctx.db, communityDid, userDid, 'new_list', {
@@ -139,104 +149,90 @@ export const createRouter = (ctx: AppContext) => {
         message: `created a new list: ${name}`,
       });
 
-      return res.json({ list: inserted });
+      return res.json({
+        list: {
+          uri: pdsRecord.uri,
+          rkey: rkeyFromUri(pdsRecord.uri),
+          name,
+          description,
+          purpose,
+          segmentType,
+          createdBy: userDid,
+          createdAt: now,
+        },
+      });
     })
   );
 
   /**
-   * PUT /groups/:communityDid/lists/:listId
+   * PUT /groups/:communityDid/lists/:rkey
    * Update a list. Admin only.
    *
    * Body: { name?, description?, purpose?, segmentType? }
    */
   router.put(
-    '/lists/:listId',
+    '/lists/:rkey',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const listId = Number(req.params.listId);
+      const { rkey } = req.params;
       const { name, description, purpose, segmentType } = req.body;
 
-      const list = await ctx.db
-        .selectFrom('group_lists')
-        .selectAll()
-        .where('id', '=', listId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!list) {
+      // Fetch existing to merge
+      let existing: PdsRecord;
+      try {
+        existing = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+      } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      // Update in PDS
-      await opensocial.updateCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.list',
-        list.rkey,
-        {
-          name: name ?? list.name,
-          description: description ?? list.description,
-          purpose: purpose ?? list.purpose,
-          segmentType: segmentType ?? list.segmentType,
-          createdBy: list.createdBy,
-          createdAt: list.createdAt.toISOString(),
-        }
+      const updatedRecord = {
+        ...existing.value,
+        name: name ?? existing.value.name,
+        description: description !== undefined ? description : existing.value.description,
+        purpose: purpose !== undefined ? purpose : existing.value.purpose,
+        segmentType: segmentType !== undefined ? segmentType : existing.value.segmentType,
+      };
+
+      const result = await opensocial.updateCommunityRecord(
+        communityDid, userDid, COL_LIST, rkey, updatedRecord
       );
 
-      // Update in Postgres
-      const updated = await ctx.db
-        .updateTable('group_lists')
-        .set({
-          name: name ?? list.name,
-          description: description !== undefined ? description : list.description,
-          purpose: purpose !== undefined ? purpose : list.purpose,
-          segmentType: segmentType !== undefined ? segmentType : list.segmentType,
-          updatedAt: new Date(),
-        })
-        .where('id', '=', listId)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      return res.json({ list: updated });
+      return res.json({
+        list: { uri: result.uri, rkey, ...updatedRecord },
+      });
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/lists/:listId
+   * DELETE /groups/:communityDid/lists/:rkey
    * Delete a list and all its items/segments. Admin only.
    */
   router.delete(
-    '/lists/:listId',
+    '/lists/:rkey',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const listId = Number(req.params.listId);
+      const { rkey } = req.params;
 
-      const list = await ctx.db
-        .selectFrom('group_lists')
-        .selectAll()
-        .where('id', '=', listId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!list) {
+      // Get the list URI to find children
+      let list: PdsRecord;
+      try {
+        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+      } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      // Delete from PDS
-      await opensocial.deleteCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.list',
-        list.rkey
-      );
+      // Delete all child items (and their children: segments, posts, reactions)
+      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
 
-      // Cascading delete handles items, segments, posts via FK constraints
-      await ctx.db
-        .deleteFrom('group_lists')
-        .where('id', '=', listId)
-        .execute();
+      for (const item of listItems) {
+        await deleteItemAndChildren(communityDid, userDid, item.uri, rkeyFromUri(item.uri));
+      }
+
+      // Delete the list itself
+      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_LIST, rkey);
 
       return res.json({ success: true });
     })
@@ -247,73 +243,77 @@ export const createRouter = (ctx: AppContext) => {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * GET /groups/:communityDid/lists/:listId/items
-   * Get all items in a list.
+   * GET /groups/:communityDid/lists/:listRkey/items
+   * List all items for a list.
    */
   router.get(
-    '/lists/:listId/items',
+    '/lists/:listRkey/items',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const listId = Number(req.params.listId);
+      const { listRkey } = req.params;
 
-      const items = await ctx.db
-        .selectFrom('group_list_items')
-        .selectAll()
-        .where('listId', '=', listId)
-        .where('communityDid', '=', communityDid)
-        .orderBy('order', 'asc')
-        .execute();
+      // Get the list URI
+      let list: PdsRecord;
+      try {
+        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+      } catch {
+        return res.status(404).json({ error: 'List not found' });
+      }
+
+      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const items = allItems
+        .filter((r: any) => r.value.listUri === list.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
       return res.json({ items });
     })
   );
 
   /**
-   * POST /groups/:communityDid/lists/:listId/items
+   * POST /groups/:communityDid/lists/:listRkey/items
    * Add an item to a list. Any member can add.
    *
    * Body: { title, creator?, mediaItemId?, mediaType, order? }
    */
   router.post(
-    '/lists/:listId/items',
+    '/lists/:listRkey/items',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const listId = Number(req.params.listId);
+      const { listRkey } = req.params;
       const { title, creator, mediaItemId, mediaType, order } = req.body;
 
       if (!title || !mediaType) {
         return res.status(400).json({ error: 'title and mediaType are required' });
       }
 
-      const list = await ctx.db
-        .selectFrom('group_lists')
-        .selectAll()
-        .where('id', '=', listId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!list) {
+      // Get the list URI + name
+      let list: PdsRecord;
+      try {
+        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+      } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      // Determine order
-      const lastItem = await ctx.db
-        .selectFrom('group_list_items')
-        .select('order')
-        .where('listId', '=', listId)
-        .orderBy('order', 'desc')
-        .executeTakeFirst();
-      const itemOrder = order ?? (lastItem ? lastItem.order + 1 : 0);
+      // Determine order from existing items
+      let itemOrder = order;
+      if (itemOrder == null) {
+        const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+        const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
+        const maxOrder = listItems.reduce(
+          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+        );
+        itemOrder = maxOrder + 1;
+      }
 
       const now = new Date().toISOString();
 
-      // Write to PDS
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'app.collectivesocial.group.listitem',
+        COL_LISTITEM,
         {
           listUri: list.uri,
           title,
@@ -326,148 +326,115 @@ export const createRouter = (ctx: AppContext) => {
         }
       );
 
-      const rkey = pdsRecord.uri.split('/').pop()!;
-
-      const inserted = await ctx.db
-        .insertInto('group_list_items')
-        .values({
-          uri: pdsRecord.uri,
-          rkey,
-          communityDid,
-          listId,
-          listUri: list.uri,
-          title,
-          creator: creator || null,
-          mediaItemId: mediaItemId || null,
-          mediaType,
-          order: itemOrder,
-          status: 'not-started',
-          statusUri: null,
-          addedBy: userDid,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      // Notify members
       await notifyAllMembers(ctx.db, communityDid, userDid, 'new_item', {
         subjectUri: pdsRecord.uri,
         subjectType: 'listitem',
-        message: `added "${title}" to ${list.name}`,
+        message: `added "${title}" to ${(list.value as any).name}`,
       });
 
-      return res.json({ item: inserted });
+      return res.json({
+        item: {
+          uri: pdsRecord.uri,
+          rkey: rkeyFromUri(pdsRecord.uri),
+          listUri: list.uri,
+          title,
+          creator,
+          mediaItemId,
+          mediaType,
+          order: itemOrder,
+          addedBy: userDid,
+          createdAt: now,
+        },
+      });
     })
   );
 
   /**
-   * PUT /groups/:communityDid/items/:itemId/status
+   * PUT /groups/:communityDid/items/:rkey/status
    * Set the group status of a list item. Admin only.
    *
    * Body: { status: 'not-started' | 'in-progress' | 'completed' }
    */
   router.put(
-    '/items/:itemId/status',
+    '/items/:rkey/status',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const itemId = Number(req.params.itemId);
+      const { rkey } = req.params;
       const { status } = req.body;
 
       const validStatuses = ['not-started', 'in-progress', 'completed'];
       if (!status || !validStatuses.includes(status)) {
-        return res.status(400).json({ error: `status must be one of: ${validStatuses.join(', ')}` });
+        return res.status(400).json({
+          error: `status must be one of: ${validStatuses.join(', ')}`,
+        });
       }
 
-      const item = await ctx.db
-        .selectFrom('group_list_items')
-        .selectAll()
-        .where('id', '=', itemId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!item) {
+      // Get the item
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+      } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       const now = new Date().toISOString();
 
-      // Create or update the status record in PDS
-      let statusUri = item.statusUri;
-      if (statusUri) {
-        const statusRkey = statusUri.split('/').pop()!;
+      // Find existing status record for this item
+      const allStatuses = await opensocial.listAllCommunityRecords(
+        communityDid, COL_LISTITEM_STATUS
+      );
+      const existingStatus = allStatuses.find(
+        (r: any) => r.value.listItemUri === item.uri
+      );
+
+      let statusUri: string;
+      if (existingStatus) {
+        const statusRkey = rkeyFromUri(existingStatus.uri);
         const result = await opensocial.updateCommunityRecord(
-          communityDid,
-          userDid,
-          'app.collectivesocial.group.listitem.status',
-          statusRkey,
+          communityDid, userDid, COL_LISTITEM_STATUS, statusRkey,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
       } else {
         const result = await opensocial.createCommunityRecord(
-          communityDid,
-          userDid,
-          'app.collectivesocial.group.listitem.status',
+          communityDid, userDid, COL_LISTITEM_STATUS,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
       }
 
-      const updated = await ctx.db
-        .updateTable('group_list_items')
-        .set({ status, statusUri, updatedAt: new Date() })
-        .where('id', '=', itemId)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      // Notify all members about status change
       await notifyAllMembers(ctx.db, communityDid, userDid, 'status_change', {
         subjectUri: item.uri,
         subjectType: 'listitem',
-        message: `marked "${item.title}" as ${status}`,
+        message: `marked "${(item.value as any).title}" as ${status}`,
       });
 
-      return res.json({ item: updated });
+      return res.json({
+        item: { uri: item.uri, rkey, ...item.value, status, statusUri },
+      });
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/items/:itemId
+   * DELETE /groups/:communityDid/items/:rkey
    * Remove an item from a list. Admin only.
    */
   router.delete(
-    '/items/:itemId',
+    '/items/:rkey',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const itemId = Number(req.params.itemId);
+      const { rkey } = req.params;
 
-      const item = await ctx.db
-        .selectFrom('group_list_items')
-        .selectAll()
-        .where('id', '=', itemId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!item) {
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+      } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
-      // Delete from PDS
-      await opensocial.deleteCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.listitem',
-        item.rkey
-      );
-
-      // Cascading delete handles segments, posts via FK constraints
-      await ctx.db
-        .deleteFrom('group_list_items')
-        .where('id', '=', itemId)
-        .execute();
+      await deleteItemAndChildren(communityDid, userDid, item.uri, rkey);
 
       return res.json({ success: true });
     })
@@ -478,30 +445,38 @@ export const createRouter = (ctx: AppContext) => {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * GET /groups/:communityDid/items/:itemId/segments
+   * GET /groups/:communityDid/items/:itemRkey/segments
    * List all segments for a list item.
    */
   router.get(
-    '/items/:itemId/segments',
+    '/items/:itemRkey/segments',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const itemId = Number(req.params.itemId);
+      const { itemRkey } = req.params;
 
-      const segments = await ctx.db
-        .selectFrom('group_segments')
-        .selectAll()
-        .where('listItemId', '=', itemId)
-        .where('communityDid', '=', communityDid)
-        .orderBy('order', 'asc')
-        .execute();
+      // Get the item URI
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+      } catch {
+        return res.status(404).json({ error: 'Item not found' });
+      }
+
+      const allSegments = await opensocial.listAllCommunityRecords(
+        communityDid, COL_SEGMENT
+      );
+      const segments = allSegments
+        .filter((r: any) => r.value.listItemUri === item.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
+        .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
       return res.json({ segments });
     })
   );
 
   /**
-   * POST /groups/:communityDid/items/:itemId/segments
+   * POST /groups/:communityDid/items/:itemRkey/segments
    * Create a reading assignment segment. Admin only.
    *
    * Body: {
@@ -510,25 +485,18 @@ export const createRouter = (ctx: AppContext) => {
    *   startChapter?, endChapter?,
    *   assignedDate?, order?
    * }
-   *
-   * When segmentType is "chapters" and the media item has a chapterMap,
-   * page and percent ranges are auto-derived.
    */
   router.post(
-    '/items/:itemId/segments',
+    '/items/:itemRkey/segments',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const itemId = Number(req.params.itemId);
+      const { itemRkey } = req.params;
 
-      const item = await ctx.db
-        .selectFrom('group_list_items')
-        .selectAll()
-        .where('id', '=', itemId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!item) {
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+      } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
@@ -544,11 +512,12 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       // Auto-derive page/percent from chapter map if available
-      if (segmentType === 'chapters' && startChapter != null && item.mediaItemId) {
+      const mediaItemId = (item.value as any).mediaItemId;
+      if (segmentType === 'chapters' && startChapter != null && mediaItemId) {
         const mediaItem = await ctx.db
           .selectFrom('media_items')
           .select(['chapterMap', 'length'])
-          .where('id', '=', item.mediaItemId)
+          .where('id', '=', mediaItemId)
           .executeTakeFirst();
 
         if (mediaItem?.chapterMap) {
@@ -564,8 +533,6 @@ export const createRouter = (ctx: AppContext) => {
           if (startCh) {
             startPage = startCh.startPage;
             endPage = endCh?.endPage ?? startCh.endPage;
-
-            // Derive percent if total pages known
             const totalPages = mediaItem.length;
             if (totalPages && totalPages > 0) {
               startPercent = Math.round((startPage / totalPages) * 100);
@@ -576,94 +543,79 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       // Determine order
-      const lastSegment = await ctx.db
-        .selectFrom('group_segments')
-        .select('order')
-        .where('listItemId', '=', itemId)
-        .orderBy('order', 'desc')
-        .executeTakeFirst();
-      const segOrder = order ?? (lastSegment ? lastSegment.order + 1 : 0);
+      if (order == null) {
+        const allSegments = await opensocial.listAllCommunityRecords(
+          communityDid, COL_SEGMENT
+        );
+        const itemSegments = allSegments.filter(
+          (r: any) => r.value.listItemUri === item.uri
+        );
+        const maxOrder = itemSegments.reduce(
+          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+        );
+        order = maxOrder + 1;
+      }
 
       const now = new Date().toISOString();
 
-      // Write to PDS
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'app.collectivesocial.group.segment',
+        COL_SEGMENT,
         {
           listItemUri: item.uri,
           label,
           segmentType,
-          startPage,
-          endPage,
-          startPercent,
-          endPercent,
-          startChapter,
-          endChapter,
+          startPage, endPage,
+          startPercent, endPercent,
+          startChapter, endChapter,
           assignedDate,
-          order: segOrder,
+          order,
           createdBy: userDid,
           createdAt: now,
         }
       );
 
-      const rkey = pdsRecord.uri.split('/').pop()!;
-
-      const inserted = await ctx.db
-        .insertInto('group_segments')
-        .values({
-          uri: pdsRecord.uri,
-          rkey,
-          communityDid,
-          listItemId: itemId,
-          listItemUri: item.uri,
-          label,
-          segmentType: segmentType || null,
-          startPage: startPage ?? null,
-          endPage: endPage ?? null,
-          startPercent: startPercent ?? null,
-          endPercent: endPercent ?? null,
-          startChapter: startChapter ?? null,
-          endChapter: endChapter ?? null,
-          assignedDate: assignedDate ? new Date(assignedDate) : null,
-          order: segOrder,
-          createdBy: userDid,
-          createdAt: new Date(),
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      // Notify all members about new assignment
       await notifyAllMembers(ctx.db, communityDid, userDid, 'new_segment', {
         subjectUri: pdsRecord.uri,
         subjectType: 'segment',
-        message: `assigned new reading: ${label} for "${item.title}"${assignedDate ? ` due ${new Date(assignedDate).toLocaleDateString()}` : ''}`,
+        message: `assigned: ${label}`,
       });
 
-      return res.json({ segment: inserted });
+      return res.json({
+        segment: {
+          uri: pdsRecord.uri,
+          rkey: rkeyFromUri(pdsRecord.uri),
+          listItemUri: item.uri,
+          label,
+          segmentType,
+          startPage, endPage,
+          startPercent, endPercent,
+          startChapter, endChapter,
+          assignedDate,
+          order,
+          createdBy: userDid,
+          createdAt: now,
+        },
+      });
     })
   );
 
   /**
-   * PUT /groups/:communityDid/segments/:segmentId
+   * PUT /groups/:communityDid/segments/:rkey
    * Update a segment. Admin only.
    */
   router.put(
-    '/segments/:segmentId',
+    '/segments/:rkey',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const segmentId = Number(req.params.segmentId);
+      const { rkey } = req.params;
 
-      const segment = await ctx.db
-        .selectFrom('group_segments')
-        .selectAll()
-        .where('id', '=', segmentId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!segment) {
+      let existing: PdsRecord;
+      try {
+        existing = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+      } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
@@ -674,81 +626,60 @@ export const createRouter = (ctx: AppContext) => {
         assignedDate, order,
       } = req.body;
 
-      // Update in PDS
-      await opensocial.updateCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.segment',
-        segment.rkey,
-        {
-          listItemUri: segment.listItemUri,
-          label: label ?? segment.label,
-          segmentType: segmentType ?? segment.segmentType,
-          startPage: startPage ?? segment.startPage,
-          endPage: endPage ?? segment.endPage,
-          startPercent: startPercent ?? segment.startPercent,
-          endPercent: endPercent ?? segment.endPercent,
-          startChapter: startChapter ?? segment.startChapter,
-          endChapter: endChapter ?? segment.endChapter,
-          assignedDate: assignedDate ?? segment.assignedDate?.toISOString(),
-          order: order ?? segment.order,
-          createdBy: segment.createdBy,
-          createdAt: segment.createdAt.toISOString(),
-        }
+      const val = existing.value as any;
+      const updatedRecord = {
+        ...val,
+        label: label ?? val.label,
+        segmentType: segmentType !== undefined ? segmentType : val.segmentType,
+        startPage: startPage !== undefined ? startPage : val.startPage,
+        endPage: endPage !== undefined ? endPage : val.endPage,
+        startPercent: startPercent !== undefined ? startPercent : val.startPercent,
+        endPercent: endPercent !== undefined ? endPercent : val.endPercent,
+        startChapter: startChapter !== undefined ? startChapter : val.startChapter,
+        endChapter: endChapter !== undefined ? endChapter : val.endChapter,
+        assignedDate: assignedDate !== undefined ? assignedDate : val.assignedDate,
+        order: order ?? val.order,
+      };
+
+      const result = await opensocial.updateCommunityRecord(
+        communityDid, userDid, COL_SEGMENT, rkey, updatedRecord
       );
 
-      const updated = await ctx.db
-        .updateTable('group_segments')
-        .set({
-          label: label ?? segment.label,
-          segmentType: segmentType !== undefined ? segmentType : segment.segmentType,
-          startPage: startPage !== undefined ? startPage : segment.startPage,
-          endPage: endPage !== undefined ? endPage : segment.endPage,
-          startPercent: startPercent !== undefined ? startPercent : segment.startPercent,
-          endPercent: endPercent !== undefined ? endPercent : segment.endPercent,
-          startChapter: startChapter !== undefined ? startChapter : segment.startChapter,
-          endChapter: endChapter !== undefined ? endChapter : segment.endChapter,
-          assignedDate: assignedDate !== undefined ? (assignedDate ? new Date(assignedDate) : null) : segment.assignedDate,
-          order: order ?? segment.order,
-        })
-        .where('id', '=', segmentId)
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
-      return res.json({ segment: updated });
+      return res.json({
+        segment: { uri: result.uri, rkey, ...updatedRecord },
+      });
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/segments/:segmentId
+   * DELETE /groups/:communityDid/segments/:rkey
    * Delete a segment. Admin only.
    */
   router.delete(
-    '/segments/:segmentId',
+    '/segments/:rkey',
     ...adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const segmentId = Number(req.params.segmentId);
+      const { rkey } = req.params;
 
-      const segment = await ctx.db
-        .selectFrom('group_segments')
-        .selectAll()
-        .where('id', '=', segmentId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!segment) {
+      // Delete any posts associated with this segment
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+      } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      await opensocial.deleteCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.segment',
-        segment.rkey
+      // Delete child posts + reactions
+      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
+      const segmentPosts = allPosts.filter(
+        (r: any) => r.value.segmentUri === segment.uri
       );
+      for (const post of segmentPosts) {
+        await deletePostAndReactions(communityDid, userDid, post.uri);
+      }
 
-      await ctx.db.deleteFrom('group_segments').where('id', '=', segmentId).execute();
+      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT, rkey);
 
       return res.json({ success: true });
     })
@@ -759,73 +690,60 @@ export const createRouter = (ctx: AppContext) => {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * GET /groups/:communityDid/segments/:segmentId/posts
+   * GET /groups/:communityDid/segments/:segmentRkey/posts
    * List all top-level posts for a segment, with nested replies.
    */
   router.get(
-    '/segments/:segmentId/posts',
+    '/segments/:segmentRkey/posts',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const segmentId = Number(req.params.segmentId);
+      const { segmentRkey } = req.params;
 
-      const allPosts = await ctx.db
-        .selectFrom('group_posts')
-        .selectAll()
-        .where('segmentId', '=', segmentId)
-        .where('communityDid', '=', communityDid)
-        .orderBy('createdAt', 'asc')
-        .execute();
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid, COL_SEGMENT, segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
 
-      // Build threaded structure
-      const topLevel = allPosts.filter((p) => !p.parentPostId);
-      const replies = allPosts.filter((p) => p.parentPostId);
+      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
+      const segmentPosts = allPosts
+        .filter((r: any) => r.value.segmentUri === segment.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
 
-      const buildThread = (post: any): any => ({
-        ...post,
-        replies: replies
-          .filter((r) => r.parentPostId === post.id)
-          .map(buildThread),
-      });
-
-      const threads = topLevel.map(buildThread);
-
-      return res.json({ posts: threads });
+      return res.json({ posts: buildThreads(segmentPosts) });
     })
   );
 
   /**
-   * GET /groups/:communityDid/items/:itemId/posts
-   * List all top-level posts for a list item (not tied to a specific segment).
+   * GET /groups/:communityDid/items/:itemRkey/posts
+   * List all top-level posts for a list item.
    */
   router.get(
-    '/items/:itemId/posts',
+    '/items/:itemRkey/posts',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const itemId = Number(req.params.itemId);
+      const { itemRkey } = req.params;
 
-      const allPosts = await ctx.db
-        .selectFrom('group_posts')
-        .selectAll()
-        .where('listItemId', '=', itemId)
-        .where('communityDid', '=', communityDid)
-        .orderBy('createdAt', 'asc')
-        .execute();
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(
+          communityDid, COL_LISTITEM, itemRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Item not found' });
+      }
 
-      const topLevel = allPosts.filter((p) => !p.parentPostId);
-      const replies = allPosts.filter((p) => p.parentPostId);
+      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
+      const itemPosts = allPosts
+        .filter((r: any) => r.value.listItemUri === item.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
 
-      const buildThread = (post: any): any => ({
-        ...post,
-        replies: replies
-          .filter((r) => r.parentPostId === post.id)
-          .map(buildThread),
-      });
-
-      const threads = topLevel.map(buildThread);
-
-      return res.json({ posts: threads });
+      return res.json({ posts: buildThreads(itemPosts) });
     })
   );
 
@@ -833,179 +751,120 @@ export const createRouter = (ctx: AppContext) => {
    * POST /groups/:communityDid/posts
    * Create a discussion post. Any member can post.
    *
-   * Body: { text, segmentId?, listItemId?, parentPostId?, mentionedDids? }
+   * Body: { text, segmentUri?, listItemUri?, parentPostUri?, mentionedDids? }
    */
   router.post(
     '/posts',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { text, segmentId, listItemId, parentPostId, mentionedDids } = req.body;
+      const { text, segmentUri, listItemUri, parentPostUri, mentionedDids } =
+        req.body;
 
       if (!text) {
         return res.status(400).json({ error: 'text is required' });
       }
 
-      // Resolve URIs for the PDS record
-      let segmentUri: string | null = null;
-      let listItemUri: string | null = null;
-      let parentPostUri: string | null = null;
-      let resolvedListItemId: number | null = listItemId ?? null;
-
-      if (segmentId) {
-        const segment = await ctx.db
-          .selectFrom('group_segments')
-          .select(['uri', 'listItemId', 'listItemUri'])
-          .where('id', '=', segmentId)
-          .where('communityDid', '=', communityDid)
-          .executeTakeFirst();
-        if (!segment) {
-          return res.status(404).json({ error: 'Segment not found' });
-        }
-        segmentUri = segment.uri;
-        resolvedListItemId = segment.listItemId;
-        listItemUri = segment.listItemUri;
-      } else if (listItemId) {
-        const item = await ctx.db
-          .selectFrom('group_list_items')
-          .select(['uri'])
-          .where('id', '=', listItemId)
-          .where('communityDid', '=', communityDid)
-          .executeTakeFirst();
-        if (!item) {
-          return res.status(404).json({ error: 'List item not found' });
-        }
-        listItemUri = item.uri;
-      }
-
-      if (parentPostId) {
-        const parent = await ctx.db
-          .selectFrom('group_posts')
-          .select(['uri'])
-          .where('id', '=', parentPostId)
-          .where('communityDid', '=', communityDid)
-          .executeTakeFirst();
-        if (!parent) {
-          return res.status(404).json({ error: 'Parent post not found' });
-        }
-        parentPostUri = parent.uri;
-      }
-
       const now = new Date().toISOString();
 
-      // Write to PDS
       const pdsRecord = await opensocial.createCommunityRecord(
         communityDid,
         userDid,
-        'app.collectivesocial.group.post',
+        COL_POST,
         {
           text,
-          segmentUri,
-          listItemUri,
-          parentPostUri,
+          segmentUri: segmentUri || null,
+          listItemUri: listItemUri || null,
+          parentPostUri: parentPostUri || null,
           authorDid: userDid,
           mentionedDids: mentionedDids || [],
           createdAt: now,
         }
       );
 
-      const rkey = pdsRecord.uri.split('/').pop()!;
-
-      const inserted = await ctx.db
-        .insertInto('group_posts')
-        .values({
-          uri: pdsRecord.uri,
-          rkey,
-          communityDid,
-          text,
-          segmentUri,
-          segmentId: segmentId || null,
-          listItemUri,
-          listItemId: resolvedListItemId,
-          parentPostUri,
-          parentPostId: parentPostId || null,
-          authorDid: userDid,
-          createdAt: new Date(),
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-
       // Notifications
-      if (parentPostId) {
-        // Notify the parent post author about the reply
-        const parentPost = await ctx.db
-          .selectFrom('group_posts')
-          .select(['authorDid'])
-          .where('id', '=', parentPostId)
-          .executeTakeFirst();
-        if (parentPost) {
-          await createNotification(ctx.db, {
-            communityDid,
-            recipientDid: parentPost.authorDid,
-            actorDid: userDid,
-            type: 'reply',
-            subjectUri: pdsRecord.uri,
-            subjectType: 'post',
-            message: `replied to your post`,
-          });
+      if (parentPostUri) {
+        // Find parent post author from PDS
+        const parentRkey = rkeyFromUri(parentPostUri);
+        try {
+          const parentPost = await opensocial.getCommunityRecord(
+            communityDid, COL_POST, parentRkey
+          );
+          const parentAuthor = (parentPost.value as any).authorDid;
+          if (parentAuthor) {
+            await createNotification(ctx.db, {
+              communityDid,
+              recipientDid: parentAuthor,
+              actorDid: userDid,
+              type: 'reply',
+              subjectUri: pdsRecord.uri,
+              subjectType: 'post',
+              message: 'replied to your post',
+            });
+          }
+        } catch {
+          // Parent post lookup failed — skip reply notification
         }
       } else {
-        // Top-level post — notify all members
         await notifyAllMembers(ctx.db, communityDid, userDid, 'new_post', {
           subjectUri: pdsRecord.uri,
           subjectType: 'post',
-          message: `posted in the discussion`,
+          message: 'posted in the discussion',
         });
       }
 
-      // Mention notifications
       if (mentionedDids?.length) {
-        await notifyUsers(ctx.db, communityDid, userDid, mentionedDids, 'mention', {
-          subjectUri: pdsRecord.uri,
-          subjectType: 'post',
-          message: `mentioned you in a post`,
-        });
+        await notifyUsers(
+          ctx.db, communityDid, userDid, mentionedDids, 'mention',
+          {
+            subjectUri: pdsRecord.uri,
+            subjectType: 'post',
+            message: 'mentioned you in a post',
+          }
+        );
       }
 
-      return res.json({ post: inserted });
+      return res.json({
+        post: {
+          uri: pdsRecord.uri,
+          rkey: rkeyFromUri(pdsRecord.uri),
+          text,
+          segmentUri,
+          listItemUri,
+          parentPostUri,
+          authorDid: userDid,
+          createdAt: now,
+        },
+      });
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/posts/:postId
+   * DELETE /groups/:communityDid/posts/:rkey
    * Delete a post. Author or admin can delete.
    */
   router.delete(
-    '/posts/:postId',
+    '/posts/:rkey',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid, isAdmin } = req.groupAuth!;
-      const postId = Number(req.params.postId);
+      const { rkey } = req.params;
 
-      const post = await ctx.db
-        .selectFrom('group_posts')
-        .selectAll()
-        .where('id', '=', postId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!post) {
+      let post: PdsRecord;
+      try {
+        post = await opensocial.getCommunityRecord(communityDid, COL_POST, rkey);
+      } catch {
         return res.status(404).json({ error: 'Post not found' });
       }
 
-      // Only the author or an admin can delete
-      if (post.authorDid !== userDid && !isAdmin) {
-        return res.status(403).json({ error: 'Only the author or an admin can delete this post' });
+      const authorDid = (post.value as any).authorDid;
+      if (authorDid !== userDid && !isAdmin) {
+        return res
+          .status(403)
+          .json({ error: 'Only the author or an admin can delete this post' });
       }
 
-      await opensocial.deleteCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.post',
-        post.rkey
-      );
-
-      await ctx.db.deleteFrom('group_posts').where('id', '=', postId).execute();
+      await deletePostAndReactions(communityDid, userDid, post.uri);
 
       return res.json({ success: true });
     })
@@ -1016,128 +875,115 @@ export const createRouter = (ctx: AppContext) => {
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * GET /groups/:communityDid/posts/:postId/reactions
+   * GET /groups/:communityDid/posts/:postRkey/reactions
    * Get all reactions on a post.
    */
   router.get(
-    '/posts/:postId/reactions',
+    '/posts/:postRkey/reactions',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const postId = Number(req.params.postId);
+      const { postRkey } = req.params;
 
-      const reactions = await ctx.db
-        .selectFrom('group_reactions')
-        .selectAll()
-        .where('postId', '=', postId)
-        .where('communityDid', '=', communityDid)
-        .execute();
-
-      // Group by emoji
-      const grouped: Record<string, { count: number; users: string[] }> = {};
-      for (const r of reactions) {
-        if (!grouped[r.emoji]) {
-          grouped[r.emoji] = { count: 0, users: [] };
-        }
-        grouped[r.emoji].count++;
-        grouped[r.emoji].users.push(r.authorDid);
+      let post: PdsRecord;
+      try {
+        post = await opensocial.getCommunityRecord(
+          communityDid, COL_POST, postRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Post not found' });
       }
 
-      return res.json({ reactions: grouped, raw: reactions });
+      const allReactions = await opensocial.listAllCommunityRecords(
+        communityDid, COL_REACTION
+      );
+      const postReactions = allReactions.filter(
+        (r: any) => r.value.postUri === post.uri
+      );
+
+      // Group by emoji
+      const grouped: Record<
+        string,
+        { emoji: string; count: number; authors: string[] }
+      > = {};
+      for (const r of postReactions) {
+        const val = r.value as any;
+        if (!grouped[val.emoji]) {
+          grouped[val.emoji] = { emoji: val.emoji, count: 0, authors: [] };
+        }
+        grouped[val.emoji].count++;
+        grouped[val.emoji].authors.push(val.authorDid);
+      }
+
+      return res.json({ reactions: Object.values(grouped) });
     })
   );
 
   /**
-   * POST /groups/:communityDid/posts/:postId/reactions
-   * Toggle a reaction on a post. Any member can react.
-   * Posting the same emoji again removes it.
+   * POST /groups/:communityDid/posts/:postRkey/reactions
+   * Toggle an emoji reaction on a post. Any member can react.
    *
    * Body: { emoji }
    */
   router.post(
-    '/posts/:postId/reactions',
+    '/posts/:postRkey/reactions',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const postId = Number(req.params.postId);
+      const { postRkey } = req.params;
       const { emoji } = req.body;
 
       if (!emoji) {
         return res.status(400).json({ error: 'emoji is required' });
       }
 
-      const post = await ctx.db
-        .selectFrom('group_posts')
-        .selectAll()
-        .where('id', '=', postId)
-        .where('communityDid', '=', communityDid)
-        .executeTakeFirst();
-
-      if (!post) {
+      let post: PdsRecord;
+      try {
+        post = await opensocial.getCommunityRecord(
+          communityDid, COL_POST, postRkey
+        );
+      } catch {
         return res.status(404).json({ error: 'Post not found' });
       }
 
-      // Check if reaction already exists (toggle off)
-      const existing = await ctx.db
-        .selectFrom('group_reactions')
-        .selectAll()
-        .where('postId', '=', postId)
-        .where('authorDid', '=', userDid)
-        .where('emoji', '=', emoji)
-        .executeTakeFirst();
+      // Check for existing reaction (toggle off)
+      const allReactions = await opensocial.listAllCommunityRecords(
+        communityDid, COL_REACTION
+      );
+      const existing = allReactions.find(
+        (r: any) =>
+          r.value.postUri === post.uri &&
+          r.value.authorDid === userDid &&
+          r.value.emoji === emoji
+      );
 
       if (existing) {
-        // Remove reaction from PDS and DB
         await opensocial.deleteCommunityRecord(
-          communityDid,
-          userDid,
-          'app.collectivesocial.group.reaction',
-          existing.rkey
+          communityDid, userDid, COL_REACTION, rkeyFromUri(existing.uri)
         );
-
-        await ctx.db
-          .deleteFrom('group_reactions')
-          .where('id', '=', existing.id)
-          .execute();
-
         return res.json({ action: 'removed', emoji });
       }
 
       // Create new reaction
       const now = new Date().toISOString();
       const pdsRecord = await opensocial.createCommunityRecord(
-        communityDid,
-        userDid,
-        'app.collectivesocial.group.reaction',
+        communityDid, userDid, COL_REACTION,
         { postUri: post.uri, emoji, authorDid: userDid, createdAt: now }
       );
 
-      const rkey = pdsRecord.uri.split('/').pop()!;
-
-      await ctx.db
-        .insertInto('group_reactions')
-        .values({
-          uri: pdsRecord.uri,
-          rkey,
+      // Notify post author
+      const postAuthor = (post.value as any).authorDid;
+      if (postAuthor) {
+        await createNotification(ctx.db, {
           communityDid,
-          postId,
-          postUri: post.uri,
-          emoji,
-          authorDid: userDid,
-          createdAt: new Date(),
-        })
-        .execute();
-
-      // Notify post author about the reaction
-      await createNotification(ctx.db, {
-        communityDid,
-        recipientDid: post.authorDid,
-        actorDid: userDid,
-        type: 'reaction',
-        subjectUri: post.uri,
-        subjectType: 'post',
-        message: `reacted ${emoji} to your post`,
-      });
+          recipientDid: postAuthor,
+          actorDid: userDid,
+          type: 'reaction',
+          subjectUri: post.uri,
+          subjectType: 'post',
+          message: `reacted ${emoji} to your post`,
+        });
+      }
 
       return res.json({ action: 'added', emoji, uri: pdsRecord.uri });
     })
@@ -1164,15 +1010,12 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // CHAPTER MAP (media item enrichment)
+  // CHAPTER MAP (media item enrichment — still in Postgres)
   // ═══════════════════════════════════════════════════════════════
 
   /**
    * PUT /groups/:communityDid/media/:mediaItemId/chapters
    * Set the chapter map for a media item. Admin only.
-   * This is stored globally on the media item so other groups can reuse it.
-   *
-   * Body: { totalChapters, chapters: [{ chapter, title?, startPage, endPage }, ...] }
    */
   router.put(
     '/media/:mediaItemId/chapters',
@@ -1182,10 +1025,11 @@ export const createRouter = (ctx: AppContext) => {
       const { totalChapters, chapters } = req.body;
 
       if (!totalChapters || !Array.isArray(chapters)) {
-        return res.status(400).json({ error: 'totalChapters and chapters array are required' });
+        return res
+          .status(400)
+          .json({ error: 'totalChapters and chapters array are required' });
       }
 
-      // Validate chapter entries
       for (const ch of chapters) {
         if (ch.chapter == null || ch.startPage == null || ch.endPage == null) {
           return res.status(400).json({
@@ -1212,7 +1056,10 @@ export const createRouter = (ctx: AppContext) => {
         .where('id', '=', mediaItemId)
         .execute();
 
-      return res.json({ success: true, chapterMap: { totalChapters, chapters } });
+      return res.json({
+        success: true,
+        chapterMap: { totalChapters, chapters },
+      });
     })
   );
 
@@ -1237,9 +1084,9 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const chapterMap = mediaItem.chapterMap
-        ? (typeof mediaItem.chapterMap === 'string'
-            ? JSON.parse(mediaItem.chapterMap)
-            : mediaItem.chapterMap)
+        ? typeof mediaItem.chapterMap === 'string'
+          ? JSON.parse(mediaItem.chapterMap)
+          : mediaItem.chapterMap
         : null;
 
       return res.json({ chapterMap, totalPages: mediaItem.length });
@@ -1247,13 +1094,12 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // ═══════════════════════════════════════════════════════════════
-  // FEED (group activity)
+  // FEED (group activity — reads from PDS)
   // ═══════════════════════════════════════════════════════════════
 
   /**
    * GET /groups/:communityDid/feed
    * Get a chronological activity feed for the group.
-   * Combines recent posts, segments, and status changes.
    */
   router.get(
     '/feed',
@@ -1261,39 +1107,161 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
       const limit = Math.min(Number(req.query.limit) || 50, 100);
-      const offset = Number(req.query.offset) || 0;
 
-      // Fetch recent posts
-      const posts = await ctx.db
-        .selectFrom('group_posts')
-        .selectAll()
-        .where('communityDid', '=', communityDid)
-        .where('parentPostId', 'is', null) // Only top-level
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .offset(offset)
-        .execute();
+      // Fetch posts and segments from PDS
+      const [posts, segments] = await Promise.all([
+        opensocial.listAllCommunityRecords(communityDid, COL_POST),
+        opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT),
+      ]);
 
-      // Fetch recent segments
-      const segments = await ctx.db
-        .selectFrom('group_segments')
-        .selectAll()
-        .where('communityDid', '=', communityDid)
-        .orderBy('createdAt', 'desc')
-        .limit(limit)
-        .offset(offset)
-        .execute();
-
-      // Merge and sort chronologically
       const feed = [
-        ...posts.map((p) => ({ type: 'post' as const, data: p, createdAt: p.createdAt })),
-        ...segments.map((s) => ({ type: 'segment' as const, data: s, createdAt: s.createdAt })),
-      ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        ...posts
+          .filter((r: any) => !r.value.parentPostUri)
+          .map((r) => ({
+            type: 'post' as const,
+            data: { uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value },
+            createdAt: (r.value as any).createdAt,
+          })),
+        ...segments.map((r) => ({
+          type: 'segment' as const,
+          data: { uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value },
+          createdAt: (r.value as any).createdAt,
+        })),
+      ]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )
         .slice(0, limit);
 
       return res.json({ feed });
     })
   );
+
+  // ═══════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+  /** Build nested thread structure from flat posts array. */
+  function buildThreads(posts: any[]): any[] {
+    const sorted = posts.sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const topLevel = sorted.filter((p) => !p.parentPostUri);
+    const replies = sorted.filter((p) => p.parentPostUri);
+
+    const buildThread = (post: any): any => ({
+      ...post,
+      replies: replies
+        .filter((r) => r.parentPostUri === post.uri)
+        .map(buildThread),
+    });
+
+    return topLevel.map(buildThread);
+  }
+
+  /** Delete a post and all its reactions from PDS. */
+  async function deletePostAndReactions(
+    communityDid: string,
+    userDid: string,
+    postUri: string
+  ) {
+    const postRkey = rkeyFromUri(postUri);
+
+    // Delete child replies recursively
+    const allPosts = await opensocial.listAllCommunityRecords(
+      communityDid, COL_POST
+    );
+    const childPosts = allPosts.filter(
+      (r: any) => r.value.parentPostUri === postUri
+    );
+    for (const child of childPosts) {
+      await deletePostAndReactions(communityDid, userDid, child.uri);
+    }
+
+    // Delete reactions on this post
+    const allReactions = await opensocial.listAllCommunityRecords(
+      communityDid, COL_REACTION
+    );
+    const postReactions = allReactions.filter(
+      (r: any) => r.value.postUri === postUri
+    );
+    for (const reaction of postReactions) {
+      await opensocial.deleteCommunityRecord(
+        communityDid, userDid, COL_REACTION, rkeyFromUri(reaction.uri)
+      );
+    }
+
+    // Delete the post
+    await opensocial.deleteCommunityRecord(
+      communityDid, userDid, COL_POST, postRkey
+    );
+  }
+
+  /** Delete an item and all its children (segments, posts, reactions, status). */
+  async function deleteItemAndChildren(
+    communityDid: string,
+    userDid: string,
+    itemUri: string,
+    itemRkey: string
+  ) {
+    // Delete segments and their posts
+    const allSegments = await opensocial.listAllCommunityRecords(
+      communityDid, COL_SEGMENT
+    );
+    const itemSegments = allSegments.filter(
+      (r: any) => r.value.listItemUri === itemUri
+    );
+    for (const seg of itemSegments) {
+      // Delete posts for this segment
+      const allPosts = await opensocial.listAllCommunityRecords(
+        communityDid, COL_POST
+      );
+      const segPosts = allPosts.filter(
+        (r: any) => r.value.segmentUri === seg.uri
+      );
+      for (const post of segPosts) {
+        await deletePostAndReactions(communityDid, userDid, post.uri);
+      }
+      await opensocial.deleteCommunityRecord(
+        communityDid, userDid, COL_SEGMENT, rkeyFromUri(seg.uri)
+      );
+    }
+
+    // Delete posts directly on the item (not tied to a segment)
+    const allPosts = await opensocial.listAllCommunityRecords(
+      communityDid, COL_POST
+    );
+    const itemPosts = allPosts.filter(
+      (r: any) =>
+        r.value.listItemUri === itemUri && !r.value.segmentUri
+    );
+    for (const post of itemPosts) {
+      await deletePostAndReactions(communityDid, userDid, post.uri);
+    }
+
+    // Delete status record for this item
+    const allStatuses = await opensocial.listAllCommunityRecords(
+      communityDid, COL_LISTITEM_STATUS
+    );
+    const itemStatus = allStatuses.find(
+      (r: any) => r.value.listItemUri === itemUri
+    );
+    if (itemStatus) {
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_LISTITEM_STATUS,
+        rkeyFromUri(itemStatus.uri)
+      );
+    }
+
+    // Delete the item itself
+    await opensocial.deleteCommunityRecord(
+      communityDid, userDid, COL_LISTITEM, itemRkey
+    );
+  }
 
   return router;
 };

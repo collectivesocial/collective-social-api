@@ -87,6 +87,43 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+// ── PDS record types ─────────────────────────────────────────────
+
+/** A PDS record with its AT-URI, CID, and value. */
+export interface PdsRecord<T = Record<string, unknown>> {
+  uri: string;
+  cid: string;
+  value: T;
+}
+
+/**
+ * Extract the rkey from an AT-URI.
+ * e.g. "at://did:plc:xxx/app.collectivesocial.group.list/abc123" → "abc123"
+ */
+export function rkeyFromUri(uri: string): string {
+  return uri.split('/').pop()!;
+}
+
+/**
+ * List ALL records in a community PDS collection (handles pagination).
+ */
+export async function listAllCommunityRecords<T = Record<string, unknown>>(
+  communityDid: string,
+  collection: string
+): Promise<PdsRecord<T>[]> {
+  const all: PdsRecord<T>[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await listCommunityRecords(communityDid, collection, {
+      limit: 100,
+      cursor,
+    });
+    all.push(...(page.records as PdsRecord<T>[]));
+    cursor = page.cursor;
+  } while (cursor);
+  return all;
+}
+
 /**
  * List all communities visible to this app.
  * Optionally pass a user DID to include is_admin flags.
