@@ -159,3 +159,153 @@ export async function verifyCredentials(): Promise<{
 }> {
   return request('/api/v1/apps/verify', { method: 'POST' });
 }
+
+// ── Community record proxy methods ────────────────────────────────
+
+interface RecordResponse {
+  uri: string;
+  cid: string;
+}
+
+interface RecordValue {
+  uri: string;
+  cid: string;
+  value: Record<string, unknown>;
+}
+
+interface ListRecordsResponse {
+  records: Array<{ uri: string; cid: string; value: Record<string, unknown> }>;
+  cursor?: string;
+}
+
+interface MembershipCheckResponse {
+  is_member: boolean;
+  is_admin: boolean;
+}
+
+interface MemberInfo {
+  uri: string;
+  did: string | null;
+  confirmedAt: string | null;
+  isAdmin: boolean;
+}
+
+interface MembersResponse {
+  members: MemberInfo[];
+  total: number;
+}
+
+/**
+ * Create a record in a community's PDS repo on behalf of an authenticated member.
+ * The OpenSocial API will verify membership (and admin status for protected collections).
+ */
+export async function createCommunityRecord(
+  communityDid: string,
+  userDid: string,
+  collection: string,
+  record: Record<string, unknown>,
+  rkey?: string
+): Promise<RecordResponse> {
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_did: userDid, collection, record, rkey }),
+    }
+  );
+}
+
+/**
+ * Update (put) a record in a community's PDS repo.
+ * Admin-only collections require the user to be an admin.
+ */
+export async function updateCommunityRecord(
+  communityDid: string,
+  userDid: string,
+  collection: string,
+  rkey: string,
+  record: Record<string, unknown>
+): Promise<RecordResponse> {
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ user_did: userDid, collection, rkey, record }),
+    }
+  );
+}
+
+/**
+ * Delete a record from a community's PDS repo.
+ */
+export async function deleteCommunityRecord(
+  communityDid: string,
+  userDid: string,
+  collection: string,
+  rkey: string
+): Promise<{ success: boolean }> {
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}?user_did=${encodeURIComponent(userDid)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/**
+ * List records in a community's PDS repo collection.
+ */
+export async function listCommunityRecords(
+  communityDid: string,
+  collection: string,
+  opts?: { limit?: number; cursor?: string }
+): Promise<ListRecordsResponse> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set('limit', String(opts.limit));
+  if (opts?.cursor) params.set('cursor', opts.cursor);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}${qs}`
+  );
+}
+
+/**
+ * Get a specific record from a community's PDS repo.
+ */
+export async function getCommunityRecord(
+  communityDid: string,
+  collection: string,
+  rkey: string
+): Promise<RecordValue> {
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}`
+  );
+}
+
+/**
+ * Check if a user is a member (and/or admin) of a community.
+ */
+export async function checkMembership(
+  communityDid: string,
+  userDid: string
+): Promise<MembershipCheckResponse> {
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/membership/check`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_did: userDid }),
+    }
+  );
+}
+
+/**
+ * List all members of a community (public mode — no admin auth required).
+ */
+export async function listMembers(
+  communityDid: string,
+  search?: string
+): Promise<MembersResponse> {
+  const params = new URLSearchParams({ public: 'true' });
+  if (search) params.set('search', search);
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/members?${params.toString()}`
+  );
+}

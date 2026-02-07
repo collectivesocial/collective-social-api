@@ -13,6 +13,8 @@ import { createRouter as createTagsRouter } from './routes/tags';
 import { createRouter as createCommentsRouter } from './routes/comments';
 import { createRouter as createReactionsRouter } from './routes/reactions';
 import { createRouter as createGroupsRouter } from './routes/groups';
+import { createRouter as createGroupContentRouter } from './routes/groupContent';
+import { createRouter as createNotificationsRouter } from './routes/notifications';
 import { createRouter as createUseritemsRouter } from './routes/useritems';
 import { createRouter as createCompletionsRouter } from './routes/completions';
 import { config } from './config';
@@ -75,6 +77,12 @@ createAppContext().then((ctx) => {
 
   // Mount groups routes (powered by OpenSocial)
   app.use('/groups', createGroupsRouter(ctx));
+
+  // Mount group content routes (book club lists, segments, posts, reactions)
+  app.use('/groups/:communityDid', createGroupContentRouter(ctx));
+
+  // Mount notification routes
+  app.use('/notifications', createNotificationsRouter(ctx));
 
   // Mount useritems routes
   app.use('/useritems', createUseritemsRouter(ctx));

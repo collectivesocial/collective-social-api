@@ -7,6 +7,14 @@ import { List, ListItem } from './models/list';
 import { MediaItem } from './models/media';
 import { User } from './models/user';
 import {
+  GroupList,
+  GroupListItem,
+  GroupSegment,
+  GroupPost,
+  GroupReaction,
+  GroupNotification,
+} from './models/groupContent';
+import {
   Kysely,
   Migration,
   MigrationProvider,
@@ -123,6 +131,12 @@ export type DatabaseSchema = {
   tag_reports: TagReport;
   comments: PublicComment;
   reactions: Reaction;
+  group_lists: GroupList;
+  group_list_items: GroupListItem;
+  group_segments: GroupSegment;
+  group_posts: GroupPost;
+  group_reactions: GroupReaction;
+  group_notifications: GroupNotification;
 };
 
 // Migrations
@@ -984,6 +998,164 @@ migrations['022'] = {
   async down(db: Kysely<unknown>) {
     // Drop the reviewId column
     await db.schema.alterTable('share_links').dropColumn('reviewId').execute();
+  },
+};
+
+migrations['023'] = {
+  async up(db: Kysely<unknown>) {
+    // Add chapter_map JSONB column to media_items for storing page-to-chapter mappings.
+    // Format: { "totalChapters": 25, "chapters": [ { "chapter": 1, "title": "…", "startPage": 1, "endPage": 22 }, … ] }
+    // This lets book clubs assign chapters and auto-derive page/percent ranges.
+    await sql`ALTER TABLE media_items ADD COLUMN IF NOT EXISTS "chapterMap" jsonb DEFAULT NULL`.execute(db);
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('media_items').dropColumn('chapterMap').execute();
+  },
+};
+
+migrations['024'] = {
+  async up(db: Kysely<unknown>) {
+    // ── Group lists ──────────────────────────────────────────────
+    await db.schema
+      .createTable('group_lists')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('name', 'varchar(128)', (col) => col.notNull())
+      .addColumn('description', 'text')
+      .addColumn('purpose', 'varchar(50)')
+      .addColumn('segmentType', 'varchar(50)')
+      .addColumn('createdBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_lists_community_idx').on('group_lists').column('communityDid').execute();
+
+    // ── Group list items ─────────────────────────────────────────
+    await db.schema
+      .createTable('group_list_items')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('listId', 'integer', (col) => col.notNull().references('group_lists.id').onDelete('cascade'))
+      .addColumn('listUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('title', 'varchar(512)', (col) => col.notNull())
+      .addColumn('creator', 'varchar(256)')
+      .addColumn('mediaItemId', 'integer')
+      .addColumn('mediaType', 'varchar(50)', (col) => col.notNull())
+      .addColumn('order', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('status', 'varchar(50)', (col) => col.notNull().defaultTo('not-started'))
+      .addColumn('statusUri', 'varchar(512)')
+      .addColumn('addedBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .addColumn('updatedAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_list_items_list_idx').on('group_list_items').column('listId').execute();
+    await db.schema.createIndex('group_list_items_community_idx').on('group_list_items').column('communityDid').execute();
+
+    // ── Group segments (reading assignments) ─────────────────────
+    await db.schema
+      .createTable('group_segments')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('listItemId', 'integer', (col) => col.notNull().references('group_list_items.id').onDelete('cascade'))
+      .addColumn('listItemUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('label', 'varchar(256)', (col) => col.notNull())
+      .addColumn('segmentType', 'varchar(50)')
+      .addColumn('startPage', 'integer')
+      .addColumn('endPage', 'integer')
+      .addColumn('startPercent', 'integer')
+      .addColumn('endPercent', 'integer')
+      .addColumn('startChapter', 'integer')
+      .addColumn('endChapter', 'integer')
+      .addColumn('assignedDate', 'timestamptz')
+      .addColumn('order', 'integer', (col) => col.notNull().defaultTo(0))
+      .addColumn('createdBy', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_segments_list_item_idx').on('group_segments').column('listItemId').execute();
+    await db.schema.createIndex('group_segments_community_idx').on('group_segments').column('communityDid').execute();
+
+    // ── Group posts (discussion threads) ─────────────────────────
+    await db.schema
+      .createTable('group_posts')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('text', 'text', (col) => col.notNull())
+      .addColumn('segmentUri', 'varchar(512)')
+      .addColumn('segmentId', 'integer')
+      .addColumn('listItemUri', 'varchar(512)')
+      .addColumn('listItemId', 'integer')
+      .addColumn('parentPostUri', 'varchar(512)')
+      .addColumn('parentPostId', 'integer')
+      .addColumn('authorDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_posts_community_idx').on('group_posts').column('communityDid').execute();
+    await db.schema.createIndex('group_posts_segment_idx').on('group_posts').column('segmentId').execute();
+    await db.schema.createIndex('group_posts_list_item_idx').on('group_posts').column('listItemId').execute();
+    await db.schema.createIndex('group_posts_parent_idx').on('group_posts').column('parentPostId').execute();
+    await db.schema.createIndex('group_posts_author_idx').on('group_posts').column('authorDid').execute();
+
+    // ── Group reactions ──────────────────────────────────────────
+    await db.schema
+      .createTable('group_reactions')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar(512)', (col) => col.notNull().unique())
+      .addColumn('rkey', 'varchar(255)', (col) => col.notNull())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('postId', 'integer', (col) => col.notNull().references('group_posts.id').onDelete('cascade'))
+      .addColumn('postUri', 'varchar(512)', (col) => col.notNull())
+      .addColumn('emoji', 'varchar(50)', (col) => col.notNull())
+      .addColumn('authorDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_reactions_post_idx').on('group_reactions').column('postId').execute();
+    await db.schema.createIndex('group_reactions_author_idx').on('group_reactions').column('authorDid').execute();
+    await db.schema
+      .createIndex('group_reactions_unique_idx')
+      .on('group_reactions')
+      .columns(['authorDid', 'postId', 'emoji'])
+      .unique()
+      .execute();
+
+    // ── Group notifications ──────────────────────────────────────
+    await db.schema
+      .createTable('group_notifications')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('communityDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('recipientDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('actorDid', 'varchar(255)', (col) => col.notNull())
+      .addColumn('type', 'varchar(50)', (col) => col.notNull())
+      .addColumn('subjectUri', 'varchar(512)')
+      .addColumn('subjectType', 'varchar(50)')
+      .addColumn('message', 'text')
+      .addColumn('read', 'boolean', (col) => col.notNull().defaultTo(false))
+      .addColumn('createdAt', 'timestamptz', (col) => col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`))
+      .execute();
+
+    await db.schema.createIndex('group_notifications_recipient_idx').on('group_notifications').column('recipientDid').execute();
+    await db.schema.createIndex('group_notifications_community_idx').on('group_notifications').column('communityDid').execute();
+    await db.schema.createIndex('group_notifications_read_idx').on('group_notifications').columns(['recipientDid', 'read']).execute();
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('group_notifications').execute();
+    await db.schema.dropTable('group_reactions').execute();
+    await db.schema.dropTable('group_posts').execute();
+    await db.schema.dropTable('group_segments').execute();
+    await db.schema.dropTable('group_list_items').execute();
+    await db.schema.dropTable('group_lists').execute();
   },
 };
 

@@ -1,5 +1,17 @@
 import { Generated } from 'kysely';
 
+export interface ChapterEntry {
+  chapter: number;
+  title?: string;
+  startPage: number;
+  endPage: number;
+}
+
+export interface ChapterMap {
+  totalChapters: number;
+  chapters: ChapterEntry[];
+}
+
 export interface MediaItem {
   id: Generated<number>;
   mediaType:
@@ -20,6 +32,7 @@ export interface MediaItem {
   description?: string;
   publishedYear?: number;
   length?: number; // Pages for books, minutes for movies/videos, episodes for TV
+  chapterMap?: ChapterMap | null; // Page-to-chapter mapping for books (stored as JSONB)
   totalRatings: number;
   totalReviews: number;
   totalSaves: number;

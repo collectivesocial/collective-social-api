@@ -54,6 +54,8 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // GET /groups/:did — get a single community's full details
+  // Includes public lists and in-progress items for the group detail page.
+  // Works for both authenticated members and unauthenticated visitors.
   router.get(
     '/:did',
     handler(async (req: Request, res: Response) => {
@@ -63,7 +65,54 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const data = await opensocial.getCommunity(did, userDid);
-        return res.json(data);
+
+        // Check membership status
+        let isMember = false;
+        let isAdmin = false;
+        if (userDid) {
+          try {
+            const membership = await opensocial.checkMembership(did, userDid);
+            isMember = membership.is_member;
+            isAdmin = membership.is_admin;
+          } catch {
+            // Not a member or check failed — that's fine for public view
+          }
+        }
+
+        // Fetch group lists from Postgres index (public data)
+        const lists = await ctx.db
+          .selectFrom('group_lists')
+          .selectAll()
+          .where('communityDid', '=', did)
+          .orderBy('createdAt', 'desc')
+          .execute();
+
+        // Fetch in-progress items across all lists
+        const inProgressItems = await ctx.db
+          .selectFrom('group_list_items')
+          .selectAll()
+          .where('communityDid', '=', did)
+          .where('status', '=', 'in-progress')
+          .orderBy('updatedAt', 'desc')
+          .execute();
+
+        // Get member count
+        let memberCount = 0;
+        try {
+          const members = await opensocial.listMembers(did);
+          memberCount = members.total;
+        } catch {
+          // Unable to fetch — that's okay
+        }
+
+        return res.json({
+          ...data,
+          is_member: isMember,
+          is_admin: isAdmin,
+          member_count: memberCount,
+          lists,
+          in_progress_items: inProgressItems,
+        });
       } catch (err: any) {
         console.error('Error getting community:', err.message);
         return res.status(err.status || 500).json({ error: err.message });
