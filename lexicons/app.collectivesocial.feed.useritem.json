@@ -1,0 +1,107 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.useritem",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A user's canonical relationship with a media item. One per user per media item. Holds status, rating, notes, and review reference.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["title", "mediaItemId", "createdAt"],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the media item.",
+            "maxGraphemes": 500,
+            "maxLength": 5000
+          },
+          "creator": {
+            "type": "string",
+            "description": "Creator/author of the media (e.g., book author, film director).",
+            "maxGraphemes": 200,
+            "maxLength": 2000
+          },
+          "mediaItemId": {
+            "type": "integer",
+            "description": "Reference to media_items table in Postgres."
+          },
+          "mediaType": {
+            "type": "string",
+            "description": "Type of media.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "course",
+              "video"
+            ],
+            "maxLength": 64
+          },
+          "status": {
+            "type": "string",
+            "description": "Consumption status: want, in-progress, completed.",
+            "knownValues": ["want", "in-progress", "completed"],
+            "maxLength": 32
+          },
+          "rating": {
+            "type": "number",
+            "description": "Rating from 0 to 5, supports half-star increments (0.5 steps).",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "notes": {
+            "type": "string",
+            "description": "Private notes about the media item. Only visible to the owner.",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when the user most recently completed this media item."
+          },
+          "review": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference (AT-URI) to an associated app.collectivesocial.feed.review record."
+          },
+          "recommendations": {
+            "type": "array",
+            "description": "List of users who recommended this item.",
+            "items": {
+              "type": "object",
+              "required": ["did", "suggestedAt"],
+              "properties": {
+                "did": {
+                  "type": "string",
+                  "format": "did",
+                  "description": "DID of the user who recommended this item."
+                },
+                "suggestedAt": {
+                  "type": "string",
+                  "format": "datetime",
+                  "description": "Timestamp when this recommendation was made."
+                }
+              }
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this user-item relationship was created."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this record was last updated."
+          }
+        }
+      }
+    }
+  }
+}

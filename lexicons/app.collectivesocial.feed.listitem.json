@@ -4,7 +4,7 @@
   "defs": {
     "main": {
       "type": "record",
-      "description": "An item (media review) in a Collective Social collection list.",
+      "description": "A lightweight membership record linking a media item to a collection list. Status, rating, notes, and review data live on the useritem record.",
       "key": "tid",
       "record": {
         "type": "object",
@@ -29,11 +29,11 @@
           },
           "mediaItemId": {
             "type": "integer",
-            "description": "Optional reference to media_items table for aggregated data."
+            "description": "Reference to media_items table for aggregated data."
           },
           "mediaType": {
             "type": "string",
-            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, etc.",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, video, etc.",
             "knownValues": [
               "book",
               "movie",
@@ -42,55 +42,19 @@
               "article",
               "game",
               "music",
-              "course"
+              "course",
+              "video"
             ],
             "maxLength": 64
-          },
-          "status": {
-            "type": "string",
-            "description": "Consumption status: want, in-progress, completed.",
-            "knownValues": ["want", "in-progress", "completed"],
-            "maxLength": 32
-          },
-          "description": {
-            "type": "string",
-            "description": "Optional personal notes or description for this list item.",
-            "maxGraphemes": 300,
-            "maxLength": 3000
           },
           "order": {
             "type": "integer",
             "description": "Display order within the list. Higher numbers appear first (top). 0 appears at bottom."
           },
-          "recommendations": {
-            "type": "array",
-            "description": "List of users who recommended this item and when they suggested it.",
-            "items": {
-              "type": "object",
-              "required": ["did", "suggestedAt"],
-              "properties": {
-                "did": {
-                  "type": "string",
-                  "format": "did",
-                  "description": "DID of the user who recommended this item."
-                },
-                "suggestedAt": {
-                  "type": "string",
-                  "format": "datetime",
-                  "description": "Timestamp when this recommendation was made."
-                }
-              }
-            }
-          },
-          "completedAt": {
-            "type": "string",
-            "format": "datetime",
-            "description": "Timestamp when this media item was completed (finished reading/watching)."
-          },
-          "review": {
+          "userItem": {
             "type": "string",
             "format": "at-uri",
-            "description": "Optional reference (AT-URI) to an associated app.collectivesocial.feed.review record."
+            "description": "Reference (AT-URI) to the user's app.collectivesocial.feed.useritem record for this media item."
           },
           "createdAt": {
             "type": "string",

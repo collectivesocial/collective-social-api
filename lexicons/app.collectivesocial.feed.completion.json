@@ -1,0 +1,64 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.completion",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A completion record for tracking when a user finished (or re-finished) a media item. Allows tracking re-reads, re-watches, etc.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["mediaItemId", "completedAt", "createdAt"],
+        "properties": {
+          "mediaItemId": {
+            "type": "integer",
+            "description": "Reference to media_items table in Postgres."
+          },
+          "mediaType": {
+            "type": "string",
+            "description": "Type of media.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "course",
+              "video"
+            ],
+            "maxLength": 64
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "The date/time when the user completed this media item."
+          },
+          "rating": {
+            "type": "number",
+            "description": "Optional rating for this specific completion (0 to 5, half-star increments).",
+            "minimum": 0,
+            "maximum": 5
+          },
+          "notes": {
+            "type": "string",
+            "description": "Optional notes specific to this completion (e.g., 'Liked it even more the second time').",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "review": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference (AT-URI) to an associated review record for this completion."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this completion record was created."
+          }
+        }
+      }
+    }
+  }
+}

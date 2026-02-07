@@ -6,6 +6,7 @@ import {
   AppCollectiveSocialFeedList,
   AppCollectiveSocialFeedListitem,
   AppCollectiveSocialFeedReview,
+  AppCollectiveSocialFeedUseritem,
 } from '../types/lexicon';
 import { getSessionAgent } from '../auth/agent';
 import { sql } from 'kysely';
@@ -373,66 +374,22 @@ export const createRouter = (ctx: AppContext) => {
           (record: any) => record.value.list === sourceListUri
         );
 
-        // Get all user's reviews to check which items they've already reviewed
-        const userReviews = await ctx.db
-          .selectFrom('reviews')
-          .select(['mediaItemId', 'rating'])
-          .where('authorDid', '=', agent.did!)
-          .execute();
-
-        const reviewedMediaItems = new Map(
-          userReviews.map((r) => [r.mediaItemId, r.rating])
-        );
-
-        // Get all user's in-progress items across all lists
-        const allUserItems = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
-
-        const inProgressMediaItems = new Set(
-          allUserItems.data.records
-            .filter(
-              (record: any) =>
-                record.value.status === 'in-progress' &&
-                record.value.mediaItemId
-            )
-            .map((record: any) => record.value.mediaItemId)
-        );
-
         // Clone each item to the new list
         for (const sourceItem of sourceItems) {
           const sourceItemData = sourceItem.value as any;
           const mediaItemId = sourceItemData.mediaItemId;
-
-          // Determine status:
-          // 1. If user has reviewed this item, mark as completed
-          // 2. If user has this item in-progress somewhere, keep it in-progress
-          // 3. Otherwise, preserve the original status
-          let status = sourceItemData.status || 'want';
-          if (mediaItemId && reviewedMediaItems.has(mediaItemId)) {
-            status = 'completed';
-          } else if (mediaItemId && inProgressMediaItems.has(mediaItemId)) {
-            status = 'in-progress';
-          }
 
           const newItemRecord: AppCollectiveSocialFeedListitem.Record = {
             $type: 'app.collectivesocial.feed.listitem',
             list: newListUri,
             title: sourceItemData.title,
             creator: sourceItemData.creator || undefined,
-            description: sourceItemData.description || undefined,
             mediaType: sourceItemData.mediaType || 'book',
             mediaItemId: mediaItemId || undefined,
-            status: status as any,
             order:
               sourceItemData.order !== undefined
                 ? sourceItemData.order
                 : undefined,
-            // Don't copy review reference - that's personal to the original list
-            review: undefined,
-            // Copy recommendations
-            recommendations: sourceItemData.recommendations || undefined,
             createdAt: new Date().toISOString(),
           };
 
@@ -485,29 +442,56 @@ export const createRouter = (ctx: AppContext) => {
           collection: 'app.collectivesocial.feed.listitem',
         });
 
+        // Also fetch all useritem records to enrich list items with status/rating/notes
+        const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.useritem',
+        });
+
+        // Build a lookup map: mediaItemId → useritem data
+        const useritemsByMediaId: Record<number, any> = {};
+        for (const record of useritemsResponse.data.records) {
+          const val = record.value as any;
+          if (val.mediaItemId) {
+            useritemsByMediaId[val.mediaItemId] = {
+              uri: record.uri,
+              cid: record.cid,
+              status: val.status || 'want',
+              rating: val.rating ?? null,
+              notes: val.notes || null,
+              review: val.review || null,
+              completedAt: val.completedAt || null,
+              recommendations: val.recommendations || [],
+            };
+          }
+        }
+
         // Filter items that belong to this list
         const items = await Promise.all(
           response.data.records
             .filter((record: any) => record.value.list === listUri)
             .map(async (record: any) => {
+              const useritemData = record.value.mediaItemId
+                ? useritemsByMediaId[record.value.mediaItemId] || {}
+                : {};
+
               const item: any = {
                 uri: record.uri,
                 cid: record.cid,
                 title: record.value.title,
                 creator: record.value.creator || null,
-                description: record.value.description || null,
                 order:
                   record.value.order !== undefined ? record.value.order : 0,
                 mediaType: record.value.mediaType || null,
                 mediaItemId: record.value.mediaItemId || null,
-                status: record.value.status || null,
-                rating:
-                  record.value.rating !== undefined
-                    ? record.value.rating
-                    : null,
-                review: record.value.review || null,
-                notes: record.value.notes || null,
-                recommendations: record.value.recommendations || [],
+                userItemUri: record.value.userItem || useritemData.uri || null,
+                // Enriched from useritem
+                status: useritemData.status || null,
+                rating: useritemData.rating ?? null,
+                notes: useritemData.notes || null,
+                review: useritemData.review || null,
+                completedAt: useritemData.completedAt || null,
+                recommendations: useritemData.recommendations || [],
                 createdAt: record.value.createdAt,
               };
 
@@ -552,6 +536,7 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // POST /collections/:listUri/items - Add an item to a collection
+  // Creates a lightweight listitem (list membership) and ensures a useritem exists
   router.post(
     '/:listUri/items',
     handler(async (req: Request, res: Response) => {
@@ -564,11 +549,10 @@ export const createRouter = (ctx: AppContext) => {
 
       const {
         title,
-        rating,
         status,
+        rating,
         review,
         notes,
-        description,
         mediaType,
         creator,
         mediaItemId,
@@ -583,7 +567,7 @@ export const createRouter = (ctx: AppContext) => {
       try {
         const listUri = decodeURIComponent(req.params.listUri);
 
-        // Check if item already exists in the list
+        // Check if item already exists in this list
         const existingItemsResponse =
           await agent.api.com.atproto.repo.listRecords({
             repo: agent.did!,
@@ -594,8 +578,6 @@ export const createRouter = (ctx: AppContext) => {
           (record: any) => {
             const itemData = record.value as any;
             if (itemData.list !== listUri) return false;
-
-            // Match by mediaItemId if provided, otherwise by title
             if (mediaItemId) {
               return itemData.mediaItemId === mediaItemId;
             } else {
@@ -604,585 +586,184 @@ export const createRouter = (ctx: AppContext) => {
           }
         );
 
-        // Build recommendations array
-        const newRecommendations = [];
-        if (recommendedBy) {
-          // recommendedBy can be a single DID/handle or array of DIDs/handles
-          const recommenders = Array.isArray(recommendedBy)
-            ? recommendedBy
-            : [recommendedBy];
-          const suggestedAt = new Date().toISOString();
-
-          for (const recommender of recommenders) {
-            let did = recommender;
-
-            // If it's a handle (not starting with did:), resolve it to a DID
-            if (!recommender.startsWith('did:')) {
-              try {
-                const resolved = await agent.resolveHandle({
-                  handle: recommender,
-                });
-                did = resolved.data.did;
-              } catch (err) {
-                ctx.logger.warn(
-                  { handle: recommender },
-                  'Failed to resolve handle, using as-is'
-                );
-                // Keep the original value if resolution fails
-              }
-            }
-
-            newRecommendations.push({
-              did: did,
-              suggestedAt: suggestedAt,
-            });
-          }
+        if (existingItem) {
+          // Item already in this list — return it without duplicating
+          return res.json({
+            uri: existingItem.uri,
+            cid: existingItem.cid,
+            updated: false,
+            alreadyExists: true,
+            title,
+            mediaType,
+            creator,
+            mediaItemId,
+          });
         }
 
-        // If item exists, update it by merging information
-        if (existingItem) {
-          const existingData = existingItem.value as any;
-          const existingRecommendations = existingData.recommendations || [];
-          const oldStatus = existingData.status;
+        // --- Ensure a useritem record exists for this media item ---
+        let userItemUri: string | null = null;
 
-          // Merge recommendations, avoiding duplicates by DID
-          const mergedRecommendations = [...existingRecommendations];
-          for (const newRec of newRecommendations) {
-            const alreadyExists = mergedRecommendations.some(
-              (existing: any) => existing.did === newRec.did
-            );
-            if (!alreadyExists) {
-              mergedRecommendations.push(newRec);
-            }
-          }
-
-          // Extract rkey from existing item URI
-          const rkeyMatch = existingItem.uri.match(/\/([^\/]+)$/);
-          if (!rkeyMatch) {
-            return res.status(400).json({ error: 'Invalid existing item URI' });
-          }
-          const rkey = rkeyMatch[1];
-
-          // Determine completedAt timestamp
-          let completedAtValue = existingData.completedAt;
-          if (status === 'completed' && completedAt) {
-            completedAtValue = completedAt;
-          } else if (status === 'completed' && !existingData.completedAt) {
-            completedAtValue = new Date().toISOString();
-          }
-
-          // Update the record, keeping existing data but adding new information
-          const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
-            ...existingData,
-            // Update fields if new values provided, otherwise keep existing
-            status: status || existingData.status,
-            creator: creator || existingData.creator,
-            description:
-              description !== undefined
-                ? description || undefined
-                : existingData.description,
-            completedAt: completedAtValue,
-            recommendations:
-              mergedRecommendations.length > 0
-                ? mergedRecommendations
-                : undefined,
-          };
-
-          await agent.api.com.atproto.repo.putRecord({
+        // Check for existing useritem by listing all and matching mediaItemId
+        const useritemsResponse =
+          await agent.api.com.atproto.repo.listRecords({
             repo: agent.did!,
-            collection: 'app.collectivesocial.feed.listitem',
-            rkey: rkey,
-            record: updatedRecord as any,
+            collection: 'app.collectivesocial.feed.useritem',
           });
 
-          // Sync status across all list items with the same mediaItemId
-          const newStatus = status || existingData.status;
-          if (newStatus !== oldStatus && mediaItemId) {
-            const otherItems = existingItemsResponse.data.records.filter(
-              (record: any) =>
-                record.uri !== existingItem.uri &&
-                record.value.mediaItemId === mediaItemId
-            );
+        const existingUseritem = mediaItemId
+          ? useritemsResponse.data.records.find(
+              (record: any) => record.value.mediaItemId === mediaItemId
+            )
+          : null;
 
-            for (const otherItem of otherItems) {
-              const otherData = otherItem.value as any;
-              if (otherData.status === newStatus) continue;
-
-              const otherRkeyMatch = otherItem.uri.match(/\/([^\/]+)$/);
-              if (!otherRkeyMatch) continue;
-              const otherRkey = otherRkeyMatch[1];
-
-              const syncedRecord: AppCollectiveSocialFeedListitem.Record = {
-                ...otherData,
-                status: newStatus,
-                completedAt: completedAtValue,
-              };
-
-              try {
-                await agent.api.com.atproto.repo.putRecord({
-                  repo: agent.did!,
-                  collection: 'app.collectivesocial.feed.listitem',
-                  rkey: otherRkey,
-                  record: syncedRecord as any,
-                });
-              } catch (err) {
-                ctx.logger.error(
-                  { err, uri: otherItem.uri },
-                  'Failed to sync status to other list item'
-                );
+        if (existingUseritem) {
+          userItemUri = existingUseritem.uri;
+        } else {
+          // Build recommendations array
+          const newRecommendations = [];
+          if (recommendedBy) {
+            const recommenders = Array.isArray(recommendedBy)
+              ? recommendedBy
+              : [recommendedBy];
+            const suggestedAt = new Date().toISOString();
+            for (const recommender of recommenders) {
+              let did = recommender;
+              if (!recommender.startsWith('did:')) {
+                try {
+                  const resolved = await agent.resolveHandle({
+                    handle: recommender,
+                  });
+                  did = resolved.data.did;
+                } catch (err) {
+                  ctx.logger.warn(
+                    { handle: recommender },
+                    'Failed to resolve handle, using as-is'
+                  );
+                }
               }
+              newRecommendations.push({ did, suggestedAt });
             }
           }
 
-          // Handle review database update
+          const now = new Date();
+          const useritemRecord: AppCollectiveSocialFeedUseritem.Record = {
+            $type: 'app.collectivesocial.feed.useritem',
+            title,
+            creator: creator || undefined,
+            mediaItemId: mediaItemId || undefined,
+            mediaType: mediaType || undefined,
+            status: status || 'want',
+            rating: rating !== undefined ? Number(rating) : undefined,
+            notes: notes || undefined,
+            completedAt:
+              status === 'completed'
+                ? completedAt || now.toISOString()
+                : undefined,
+            recommendations:
+              newRecommendations.length > 0 ? newRecommendations : undefined,
+            createdAt: now.toISOString(),
+            updatedAt: now.toISOString(),
+          };
+
+          const useritemResponse =
+            await agent.api.com.atproto.repo.createRecord({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.useritem',
+              record: useritemRecord as any,
+            });
+
+          userItemUri = useritemResponse.data.uri;
+
+          // Increment totalSaves for this media item (first time user is saving it)
+          if (mediaItemId) {
+            await ctx.db
+              .updateTable('media_items')
+              .set((eb) => ({
+                totalSaves: eb('totalSaves', '+', 1),
+                updatedAt: new Date(),
+              }))
+              .where('id', '=', mediaItemId)
+              .execute();
+          }
+
+          // Handle initial review if provided
           if (
-            review !== undefined &&
+            review &&
+            review.trim() &&
             rating !== undefined &&
             mediaItemId &&
             mediaType
           ) {
-            // Check if review already exists
-            const existingReview = await ctx.db
-              .selectFrom('reviews')
-              .select(['id', 'rating', 'review'])
-              .where('authorDid', '=', agent.did!)
-              .where('mediaItemId', '=', mediaItemId)
-              .where('mediaType', '=', mediaType)
+            const reviewNow = new Date();
+            let reviewUri: string | null = null;
+            try {
+              const reviewRecord: AppCollectiveSocialFeedReview.Record = {
+                $type: 'app.collectivesocial.feed.review',
+                text: review.trim(),
+                rating: Number(rating),
+                mediaItemId: mediaItemId,
+                mediaType: mediaType as any,
+                listItem: userItemUri!,
+                createdAt: reviewNow.toISOString(),
+                updatedAt: reviewNow.toISOString(),
+              };
+
+              const reviewResponse =
+                await agent.api.com.atproto.repo.createRecord({
+                  repo: agent.did!,
+                  collection: 'app.collectivesocial.feed.review',
+                  record: reviewRecord as any,
+                });
+
+              reviewUri = reviewResponse.data.uri;
+            } catch (err) {
+              ctx.logger.error(
+                { err },
+                'Failed to create AT Protocol review record'
+              );
+            }
+
+            await ctx.db
+              .insertInto('reviews')
+              .values({
+                authorDid: agent.did!,
+                mediaItemId,
+                mediaType,
+                rating: Number(rating),
+                review: review.trim(),
+                listItemUri: userItemUri,
+                reviewUri,
+                createdAt: reviewNow,
+                updatedAt: reviewNow,
+              } as any)
+              .onConflict((oc) =>
+                oc
+                  .columns(['authorDid', 'mediaItemId', 'mediaType'])
+                  .doUpdateSet({
+                    rating: Number(rating),
+                    review: review.trim(),
+                    reviewUri,
+                    updatedAt: reviewNow,
+                  })
+              )
+              .execute();
+
+            // Update aggregated stats
+            const currentItem = await ctx.db
+              .selectFrom('media_items')
+              .select(['totalRatings', 'totalReviews', 'averageRating'])
+              .where('id', '=', mediaItemId)
               .executeTakeFirst();
 
-            const isNewReview = !existingReview;
-            const oldRating = existingReview?.rating;
-
-            if (review && review.trim()) {
-              const now = new Date();
-
-              // Create AT Protocol review record
-              let reviewUri: string | null = null;
-              try {
-                const reviewRecord: AppCollectiveSocialFeedReview.Record = {
-                  $type: 'app.collectivesocial.feed.review',
-                  text: review.trim(),
-                  rating: Number(rating),
-                  mediaItemId: mediaItemId,
-                  mediaType: mediaType as any,
-                  listItem: existingItem.uri,
-                  createdAt: now.toISOString(),
-                  updatedAt: now.toISOString(),
-                };
-
-                const reviewResponse =
-                  await agent.api.com.atproto.repo.createRecord({
-                    repo: agent.did!,
-                    collection: 'app.collectivesocial.feed.review',
-                    record: reviewRecord as any,
-                  });
-
-                reviewUri = reviewResponse.data.uri;
-              } catch (err) {
-                ctx.logger.error(
-                  { err },
-                  'Failed to create AT Protocol review record'
-                );
-                // Continue anyway - we'll store the review in the database without the URI
-              }
-
-              await ctx.db
-                .insertInto('reviews')
-                .values({
-                  authorDid: agent.did!,
-                  mediaItemId: mediaItemId,
-                  mediaType: mediaType,
-                  rating: Number(rating),
-                  review: review.trim(),
-                  listItemUri: existingItem.uri,
-                  reviewUri: reviewUri,
-                  createdAt: now,
-                  updatedAt: now,
-                } as any)
-                .onConflict((oc) =>
-                  oc
-                    .columns(['authorDid', 'mediaItemId', 'mediaType'])
-                    .doUpdateSet({
-                      rating: Number(rating),
-                      review: review.trim(),
-                      reviewUri: reviewUri,
-                      updatedAt: now,
-                    })
-                )
-                .execute();
-
-              // Update aggregated stats
-              const currentItem = await ctx.db
-                .selectFrom('media_items')
-                .select(['totalRatings', 'totalReviews', 'averageRating'])
-                .where('id', '=', mediaItemId)
-                .executeTakeFirst();
-
-              if (currentItem) {
-                const currentAvg = currentItem.averageRating
-                  ? parseFloat(currentItem.averageRating.toString())
-                  : 0;
-
-                if (isNewReview) {
-                  // Adding a new review - increment both ratings and reviews if text provided
-                  const newTotalRatings = currentItem.totalRatings + 1;
-                  const hasTextReview = review && review.trim().length > 0;
-                  const newTotalReviews = hasTextReview
-                    ? currentItem.totalReviews + 1
-                    : currentItem.totalReviews;
-                  const newAverage =
-                    (currentAvg * currentItem.totalRatings + Number(rating)) /
-                    newTotalRatings;
-
-                  // Increment the specific rating count
-                  const ratingColumn = getRatingColumnName(Number(rating));
-
-                  await ctx.db
-                    .updateTable('media_items')
-                    .set({
-                      totalRatings: newTotalRatings,
-                      totalReviews: newTotalReviews,
-                      averageRating: parseFloat(newAverage.toFixed(2)),
-                      [ratingColumn]: sql`"${sql.raw(ratingColumn)}" + 1`,
-                      updatedAt: new Date(),
-                    } as any)
-                    .where('id', '=', mediaItemId)
-                    .execute();
-
-                  // Create feed event for new review
-                  try {
-                    const profile = await agent.getProfile({
-                      actor: agent.did!,
-                    });
-                    const userHandle = profile.data.handle;
-                    const eventName = `${userHandle} reviewed "${title}"`;
-
-                    await ctx.db
-                      .insertInto('feed_events')
-                      .values({
-                        eventName,
-                        mediaLink: `/items/${mediaItemId}`,
-                        userDid: agent.did!,
-                        createdAt: new Date(),
-                      } as any)
-                      .execute();
-                  } catch (err) {
-                    ctx.logger.error(
-                      { err },
-                      'Failed to create review feed event'
-                    );
-                  }
-                } else {
-                  // Updating existing review
-                  const hadTextReview =
-                    existingReview?.review &&
-                    existingReview.review.trim().length > 0;
-                  const hasTextReview = review && review.trim().length > 0;
-                  const reviewCountChange =
-                    !hadTextReview && hasTextReview
-                      ? 1
-                      : hadTextReview && !hasTextReview
-                        ? -1
-                        : 0;
-
-                  if (oldRating !== Number(rating)) {
-                    // Rating changed - recalculate average and update rating distribution
-                    const newAverage =
-                      (currentAvg * currentItem.totalRatings -
-                        Number(oldRating) +
-                        Number(rating)) /
-                      currentItem.totalRatings;
-
-                    const oldRatingColumn = getRatingColumnName(
-                      Number(oldRating)
-                    );
-                    const newRatingColumn = getRatingColumnName(Number(rating));
-
-                    await ctx.db
-                      .updateTable('media_items')
-                      .set({
-                        totalReviews:
-                          currentItem.totalReviews + reviewCountChange,
-                        averageRating: parseFloat(newAverage.toFixed(2)),
-                        [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
-                        [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
-                        updatedAt: new Date(),
-                      } as any)
-                      .where('id', '=', mediaItemId)
-                      .execute();
-                  } else if (reviewCountChange !== 0) {
-                    // Only text review status changed
-                    await ctx.db
-                      .updateTable('media_items')
-                      .set({
-                        totalReviews:
-                          currentItem.totalReviews + reviewCountChange,
-                        updatedAt: new Date(),
-                      })
-                      .where('id', '=', mediaItemId)
-                      .execute();
-                  }
-                }
-              }
-            } else if (review === '' || review === null) {
-              // Delete review and update stats
-              await ctx.db
-                .deleteFrom('reviews')
-                .where('authorDid', '=', agent.did!)
-                .where('mediaItemId', '=', mediaItemId)
-                .where('mediaType', '=', mediaType)
-                .execute();
-
-              if (existingReview && oldRating !== undefined) {
-                // Decrement totalRatings, totalReviews, rating distribution, and recalculate average
-                const currentItem = await ctx.db
-                  .selectFrom('media_items')
-                  .select(['totalRatings', 'totalReviews', 'averageRating'])
-                  .where('id', '=', mediaItemId)
-                  .executeTakeFirst();
-
-                if (currentItem && currentItem.totalRatings > 0) {
-                  const newTotalRatings = currentItem.totalRatings - 1;
-                  const hadTextReview =
-                    existingReview.review &&
-                    existingReview.review.trim().length > 0;
-                  const newTotalReviews = hadTextReview
-                    ? currentItem.totalReviews - 1
-                    : currentItem.totalReviews;
-                  const ratingColumn = getRatingColumnName(Number(oldRating));
-
-                  if (newTotalRatings === 0) {
-                    await ctx.db
-                      .updateTable('media_items')
-                      .set({
-                        totalRatings: 0,
-                        totalReviews: 0,
-                        averageRating: 0,
-                        [ratingColumn]: sql`"${sql.raw(ratingColumn)}" - 1`,
-                        updatedAt: new Date(),
-                      } as any)
-                      .where('id', '=', mediaItemId)
-                      .execute();
-                  } else {
-                    const currentAvg = currentItem.averageRating
-                      ? parseFloat(currentItem.averageRating.toString())
-                      : 0;
-                    const newAverage =
-                      (currentAvg * currentItem.totalRatings -
-                        Number(oldRating)) /
-                      newTotalRatings;
-
-                    await ctx.db
-                      .updateTable('media_items')
-                      .set({
-                        totalRatings: newTotalRatings,
-                        totalReviews: newTotalReviews,
-                        averageRating: parseFloat(newAverage.toFixed(2)),
-                        [ratingColumn]: sql`"${sql.raw(ratingColumn)}" - 1`,
-                        updatedAt: new Date(),
-                      } as any)
-                      .where('id', '=', mediaItemId)
-                      .execute();
-                  }
-                }
-              }
-            }
-          } // Create feed event for status changes
-          if (status && status !== oldStatus && mediaType === 'book') {
-            try {
-              const profile = await agent.getProfile({ actor: agent.did! });
-              const userHandle = profile.data.handle;
-              const now = new Date();
-              let eventName = '';
-
-              if (status === 'want' && !oldStatus) {
-                // Only create "wants to read" event for new items
-                eventName = `${userHandle} wants to read "${title}"`;
-              } else if (
-                status === 'in-progress' &&
-                oldStatus !== 'in-progress'
-              ) {
-                eventName = `${userHandle} started reading "${title}"`;
-              } else if (status === 'completed' && oldStatus !== 'completed') {
-                eventName = `${userHandle} finished reading "${title}"`;
-              }
-
-              if (eventName) {
-                await ctx.db
-                  .insertInto('feed_events')
-                  .values({
-                    eventName,
-                    mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
-                    userDid: agent.did!,
-                    createdAt: now,
-                  } as any)
-                  .execute();
-              }
-            } catch (err) {
-              ctx.logger.error({ err }, 'Failed to create feed event');
-            }
-          }
-
-          return res.json({
-            uri: existingItem.uri,
-            cid: existingItem.cid,
-            updated: true,
-            title: updatedRecord.title,
-            status: updatedRecord.status,
-            mediaType: updatedRecord.mediaType,
-            creator: updatedRecord.creator,
-            mediaItemId,
-            recommendations: mergedRecommendations,
-          });
-        }
-
-        // Item doesn't exist, create new one
-        // Calculate the highest order in the current list and add 1
-        const existingItems = existingItemsResponse.data.records
-          .filter((record: any) => record.value.list === listUri)
-          .map((record: any) => record.value.order || 0);
-        const maxOrder =
-          existingItems.length > 0 ? Math.max(...existingItems) : 0;
-        const newOrder = maxOrder + 1;
-
-        const now = new Date();
-        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
-          $type: 'app.collectivesocial.feed.listitem',
-          list: listUri,
-          title,
-          creator: creator || undefined,
-          description: description || undefined,
-          order: newOrder,
-          mediaItemId: mediaItemId || undefined,
-          mediaType: mediaType || undefined,
-          status: status || undefined,
-          completedAt:
-            status === 'completed'
-              ? completedAt || now.toISOString()
-              : undefined,
-          recommendations:
-            newRecommendations.length > 0 ? newRecommendations : undefined,
-          createdAt: now.toISOString(),
-        };
-
-        // Create the record in the user's repo
-        const response = await agent.api.com.atproto.repo.createRecord({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-          record: listItemRecord as any,
-        });
-
-        // Increment totalSaves for this media item
-        if (mediaItemId) {
-          await ctx.db
-            .updateTable('media_items')
-            .set((eb) => ({
-              totalSaves: eb('totalSaves', '+', 1),
-              updatedAt: new Date(),
-            }))
-            .where('id', '=', mediaItemId)
-            .execute();
-        }
-
-        // If a public review is provided with rating and mediaItemId, save to database
-        if (
-          review &&
-          review.trim() &&
-          rating !== undefined &&
-          mediaItemId &&
-          mediaType
-        ) {
-          // Check if review already exists
-          const existingReview = await ctx.db
-            .selectFrom('reviews')
-            .select(['id', 'rating'])
-            .where('authorDid', '=', agent.did!)
-            .where('mediaItemId', '=', mediaItemId)
-            .where('mediaType', '=', mediaType)
-            .executeTakeFirst();
-
-          const isNewReview = !existingReview;
-          const oldRating = existingReview?.rating;
-          const now = new Date();
-
-          // Create AT Protocol review record
-          let reviewUri: string | null = null;
-          try {
-            const reviewRecord: AppCollectiveSocialFeedReview.Record = {
-              $type: 'app.collectivesocial.feed.review',
-              text: review.trim(),
-              rating: Number(rating),
-              mediaItemId: mediaItemId,
-              mediaType: mediaType as any,
-              listItem: response.data.uri,
-              createdAt: now.toISOString(),
-              updatedAt: now.toISOString(),
-            };
-
-            const reviewResponse =
-              await agent.api.com.atproto.repo.createRecord({
-                repo: agent.did!,
-                collection: 'app.collectivesocial.feed.review',
-                record: reviewRecord as any,
-              });
-
-            reviewUri = reviewResponse.data.uri;
-          } catch (err) {
-            ctx.logger.error(
-              { err },
-              'Failed to create AT Protocol review record'
-            );
-            // Continue anyway - we'll store the review in the database without the URI
-          }
-
-          // Upsert review - one review per user per media item
-          await ctx.db
-            .insertInto('reviews')
-            .values({
-              authorDid: agent.did!,
-              mediaItemId: mediaItemId,
-              mediaType: mediaType,
-              rating: Number(rating),
-              review: review.trim(),
-              listItemUri: response.data.uri,
-              reviewUri: reviewUri,
-              createdAt: now,
-              updatedAt: now,
-            } as any)
-            .onConflict((oc) =>
-              oc
-                .columns(['authorDid', 'mediaItemId', 'mediaType'])
-                .doUpdateSet({
-                  rating: Number(rating),
-                  review: review.trim(),
-                  listItemUri: response.data.uri,
-                  reviewUri: reviewUri,
-                  updatedAt: now,
-                })
-            )
-            .execute();
-
-          // Update aggregated stats
-          const currentItem = await ctx.db
-            .selectFrom('media_items')
-            .select(['totalRatings', 'totalReviews', 'averageRating'])
-            .where('id', '=', mediaItemId)
-            .executeTakeFirst();
-
-          if (currentItem) {
-            const currentAvg = currentItem.averageRating
-              ? parseFloat(currentItem.averageRating.toString())
-              : 0;
-
-            if (isNewReview) {
-              // Adding a new review - increment both ratings and reviews
+            if (currentItem) {
+              const currentAvg = currentItem.averageRating
+                ? parseFloat(currentItem.averageRating.toString())
+                : 0;
               const newTotalRatings = currentItem.totalRatings + 1;
               const newTotalReviews = currentItem.totalReviews + 1;
               const newAverage =
                 (currentAvg * currentItem.totalRatings + Number(rating)) /
                 newTotalRatings;
-
-              // Increment the specific rating count
               const ratingColumn = getRatingColumnName(Number(rating));
 
               await ctx.db
@@ -1196,90 +777,81 @@ export const createRouter = (ctx: AppContext) => {
                 } as any)
                 .where('id', '=', mediaItemId)
                 .execute();
+            }
+          }
 
-              // Create feed event for new review
-              try {
-                const profile = await agent.getProfile({ actor: agent.did! });
-                const userHandle = profile.data.handle;
-                const eventName = `${userHandle} reviewed "${title}"`;
+          // Create feed event for new item
+          if (mediaType === 'book') {
+            try {
+              const profile = await agent.getProfile({ actor: agent.did! });
+              const userHandle = profile.data.handle;
+              const itemStatus = status || 'want';
+              let eventName = '';
 
+              if (itemStatus === 'want') {
+                eventName = `${userHandle} wants to read "${title}"`;
+              } else if (itemStatus === 'in-progress') {
+                eventName = `${userHandle} started reading "${title}"`;
+              } else if (itemStatus === 'completed') {
+                eventName = `${userHandle} finished reading "${title}"`;
+              }
+
+              if (eventName) {
                 await ctx.db
                   .insertInto('feed_events')
                   .values({
                     eventName,
-                    mediaLink: `/items/${mediaItemId}`,
+                    mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
                     userDid: agent.did!,
                     createdAt: new Date(),
                   } as any)
                   .execute();
-              } catch (err) {
-                ctx.logger.error({ err }, 'Failed to create review feed event');
               }
-            } else if (oldRating !== Number(rating)) {
-              // Updating existing review rating
-              const newAverage =
-                (currentAvg * currentItem.totalRatings -
-                  Number(oldRating) +
-                  Number(rating)) /
-                currentItem.totalRatings;
-
-              const oldRatingColumn = getRatingColumnName(Number(oldRating));
-              const newRatingColumn = getRatingColumnName(Number(rating));
-
-              await ctx.db
-                .updateTable('media_items')
-                .set({
-                  averageRating: parseFloat(newAverage.toFixed(2)),
-                  [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
-                  [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
-                  updatedAt: new Date(),
-                } as any)
-                .where('id', '=', mediaItemId)
-                .execute();
+            } catch (err) {
+              ctx.logger.error({ err }, 'Failed to create feed event');
             }
           }
         }
 
-        // Create feed event for new items with status (books only)
-        if (status && mediaType === 'book') {
-          try {
-            const profile = await agent.getProfile({ actor: agent.did! });
-            const userHandle = profile.data.handle;
-            let eventName = '';
+        // --- Create the lightweight listitem record ---
+        const existingItemsInList = existingItemsResponse.data.records
+          .filter((record: any) => record.value.list === listUri)
+          .map((record: any) => record.value.order || 0);
+        const maxOrder =
+          existingItemsInList.length > 0
+            ? Math.max(...existingItemsInList)
+            : 0;
+        const newOrder = maxOrder + 1;
 
-            if (status === 'want') {
-              eventName = `${userHandle} wants to read "${title}"`;
-            } else if (status === 'in-progress') {
-              eventName = `${userHandle} started reading "${title}"`;
-            } else if (status === 'completed') {
-              eventName = `${userHandle} finished reading "${title}"`;
-            }
+        const now = new Date();
+        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
+          $type: 'app.collectivesocial.feed.listitem',
+          list: listUri,
+          title,
+          creator: creator || undefined,
+          order: newOrder,
+          mediaItemId: mediaItemId || undefined,
+          mediaType: mediaType || undefined,
+          userItem: userItemUri || undefined,
+          createdAt: now.toISOString(),
+        };
 
-            if (eventName) {
-              await ctx.db
-                .insertInto('feed_events')
-                .values({
-                  eventName,
-                  mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
-                  userDid: agent.did!,
-                  createdAt: now,
-                } as any)
-                .execute();
-            }
-          } catch (err) {
-            ctx.logger.error({ err }, 'Failed to create feed event');
-          }
-        }
+        const response = await agent.api.com.atproto.repo.createRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+          record: listItemRecord as any,
+        });
 
         res.json({
           uri: response.data.uri,
           cid: response.data.cid,
           created: true,
           title,
-          status,
+          status: status || 'want',
           mediaType,
           creator,
           mediaItemId,
+          userItemUri,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to add item to collection');
@@ -1289,6 +861,7 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // PUT /collections/:listUri/items/:itemUri - Update an item in a collection
+  // Now only handles order updates. Status/rating/review/notes go through PUT /useritems/:uri
   router.put(
     '/:listUri/items/:itemUri',
     handler(async (req: Request, res: Response) => {
@@ -1299,10 +872,9 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { status, rating, review, notes } = req.body;
+      const { order } = req.body;
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
         const itemUri = decodeURIComponent(req.params.itemUri);
 
         // Extract DID from itemUri to verify ownership
@@ -1312,7 +884,6 @@ export const createRouter = (ctx: AppContext) => {
         }
         const itemOwnerDid = itemDidMatch[1];
 
-        // Check if the authenticated user owns this item
         if (agent.did !== itemOwnerDid) {
           return res
             .status(403)
@@ -1334,19 +905,6 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         const currentData = itemRecord.value as any;
-        const mediaItemId = currentData.mediaItemId;
-        const mediaType = currentData.mediaType;
-
-        // Get old rating from database reviews table
-        const existingReview = await ctx.db
-          .selectFrom('reviews')
-          .select(['id', 'rating'])
-          .where('authorDid', '=', agent.did!)
-          .where('mediaItemId', '=', mediaItemId || '')
-          .where('mediaType', '=', mediaType || '')
-          .executeTakeFirst();
-        const oldRating = existingReview?.rating;
-        const isNewReview = !existingReview;
 
         // Extract rkey from itemUri
         const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
@@ -1355,19 +913,10 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Determine completedAt value
-        let completedAtValue = currentData.completedAt;
-        if (status === 'completed' && !currentData.completedAt) {
-          completedAtValue = new Date().toISOString();
-        } else if (status && status !== 'completed') {
-          completedAtValue = undefined;
-        }
-
-        // Update the record (status can be updated, rating/review/notes handled separately)
+        // Update the record with new order (lightweight - only listitem fields)
         const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
           ...currentData,
-          ...(status !== undefined && { status }),
-          ...(status !== undefined && { completedAt: completedAtValue }),
+          ...(order !== undefined && { order }),
         };
 
         await agent.api.com.atproto.repo.putRecord({
@@ -1376,241 +925,6 @@ export const createRouter = (ctx: AppContext) => {
           rkey: rkey,
           record: updatedRecord as any,
         });
-
-        // Sync status across all list items with the same mediaItemId
-        if (status !== undefined && mediaItemId) {
-          const otherItems = itemsResponse.data.records.filter(
-            (record: any) =>
-              record.uri !== itemUri &&
-              record.value.mediaItemId === mediaItemId
-          );
-
-          for (const otherItem of otherItems) {
-            const otherData = otherItem.value as any;
-            // Only update if status actually differs
-            if (otherData.status === status) continue;
-
-            const otherRkeyMatch = otherItem.uri.match(/\/([^\/]+)$/);
-            if (!otherRkeyMatch) continue;
-            const otherRkey = otherRkeyMatch[1];
-
-            const syncedRecord: AppCollectiveSocialFeedListitem.Record = {
-              ...otherData,
-              status,
-              completedAt: completedAtValue,
-            };
-
-            try {
-              await agent.api.com.atproto.repo.putRecord({
-                repo: agent.did!,
-                collection: 'app.collectivesocial.feed.listitem',
-                rkey: otherRkey,
-                record: syncedRecord as any,
-              });
-            } catch (err) {
-              ctx.logger.error(
-                { err, uri: otherItem.uri },
-                'Failed to sync status to other list item'
-              );
-            }
-          }
-        }
-
-        // If public review is provided/updated with rating and mediaItemId, upsert to database
-        if (review !== undefined && rating !== undefined && mediaItemId) {
-          const mediaType = currentData.mediaType;
-
-          if (review && review.trim() && mediaType) {
-            const now = new Date();
-
-            // Create AT Protocol review record
-            let reviewUri: string | null = null;
-            try {
-              const reviewRecord: AppCollectiveSocialFeedReview.Record = {
-                $type: 'app.collectivesocial.feed.review',
-                text: review.trim(),
-                rating: Number(rating),
-                mediaItemId: mediaItemId,
-                mediaType: mediaType as any,
-                listItem: itemUri,
-                createdAt: now.toISOString(),
-                updatedAt: now.toISOString(),
-              };
-
-              const reviewResponse =
-                await agent.api.com.atproto.repo.createRecord({
-                  repo: agent.did!,
-                  collection: 'app.collectivesocial.feed.review',
-                  record: reviewRecord as any,
-                });
-
-              reviewUri = reviewResponse.data.uri;
-            } catch (err) {
-              ctx.logger.error(
-                { err },
-                'Failed to create AT Protocol review record'
-              );
-              // Continue anyway - we'll store the review in the database without the URI
-            }
-
-            // Upsert review
-            await ctx.db
-              .insertInto('reviews')
-              .values({
-                authorDid: agent.did!,
-                mediaItemId: mediaItemId,
-                mediaType: mediaType,
-                rating: Number(rating),
-                review: review.trim(),
-                listItemUri: itemUri,
-                reviewUri: reviewUri,
-                createdAt: now,
-                updatedAt: now,
-              } as any)
-              .onConflict((oc) =>
-                oc
-                  .columns(['authorDid', 'mediaItemId', 'mediaType'])
-                  .doUpdateSet({
-                    rating: Number(rating),
-                    review: review.trim(),
-                    reviewUri: reviewUri,
-                    updatedAt: now,
-                  })
-              )
-              .execute();
-
-            // Update aggregated stats
-            const currentItem = await ctx.db
-              .selectFrom('media_items')
-              .select(['totalRatings', 'totalReviews', 'averageRating'])
-              .where('id', '=', mediaItemId)
-              .executeTakeFirst();
-
-            if (currentItem) {
-              const currentAvg = currentItem.averageRating
-                ? parseFloat(currentItem.averageRating.toString())
-                : 0;
-
-              if (isNewReview) {
-                // Adding a new review - increment both ratings and reviews
-                const newTotalRatings = currentItem.totalRatings + 1;
-                const newTotalReviews = currentItem.totalReviews + 1;
-                const newAverage =
-                  (currentAvg * currentItem.totalRatings + Number(rating)) /
-                  newTotalRatings;
-
-                // Increment the specific rating count
-                const ratingColumn = getRatingColumnName(Number(rating));
-
-                await ctx.db
-                  .updateTable('media_items')
-                  .set({
-                    totalRatings: newTotalRatings,
-                    totalReviews: newTotalReviews,
-                    averageRating: parseFloat(newAverage.toFixed(2)),
-                    [ratingColumn]: sql`"${sql.raw(ratingColumn)}" + 1`,
-                    updatedAt: new Date(),
-                  } as any)
-                  .where('id', '=', mediaItemId)
-                  .execute();
-
-                // Create feed event for new review
-                try {
-                  const profile = await agent.getProfile({ actor: agent.did! });
-                  const userHandle = profile.data.handle;
-                  const title = currentData.title;
-                  const eventName = `${userHandle} reviewed "${title}"`;
-
-                  await ctx.db
-                    .insertInto('feed_events')
-                    .values({
-                      eventName,
-                      mediaLink: `/items/${mediaItemId}`,
-                      userDid: agent.did!,
-                      createdAt: new Date(),
-                    } as any)
-                    .execute();
-                } catch (err) {
-                  ctx.logger.error(
-                    { err },
-                    'Failed to create review feed event'
-                  );
-                }
-              } else if (oldRating !== Number(rating)) {
-                // Updating existing review rating
-                const newAverage =
-                  (currentAvg * currentItem.totalRatings -
-                    Number(oldRating) +
-                    Number(rating)) /
-                  currentItem.totalRatings;
-
-                const oldRatingColumn = getRatingColumnName(Number(oldRating));
-                const newRatingColumn = getRatingColumnName(Number(rating));
-
-                await ctx.db
-                  .updateTable('media_items')
-                  .set({
-                    averageRating: parseFloat(newAverage.toFixed(2)),
-                    [oldRatingColumn]: sql`"${sql.raw(oldRatingColumn)}" - 1`,
-                    [newRatingColumn]: sql`"${sql.raw(newRatingColumn)}" + 1`,
-                    updatedAt: new Date(),
-                  })
-                  .where('id', '=', mediaItemId)
-                  .execute();
-              }
-            }
-          } else if (review === '' || review === null) {
-            // Delete review and update stats if explicitly cleared
-            await ctx.db
-              .deleteFrom('reviews')
-              .where('authorDid', '=', agent.did!)
-              .where('mediaItemId', '=', mediaItemId)
-              .where('mediaType', '=', mediaType)
-              .execute();
-
-            if (existingReview && oldRating !== undefined) {
-              // Decrement totalReviews and recalculate average
-              const currentItem = await ctx.db
-                .selectFrom('media_items')
-                .select(['totalReviews', 'averageRating'])
-                .where('id', '=', mediaItemId)
-                .executeTakeFirst();
-
-              if (currentItem && currentItem.totalReviews > 0) {
-                const newTotalReviews = currentItem.totalReviews - 1;
-                if (newTotalReviews === 0) {
-                  await ctx.db
-                    .updateTable('media_items')
-                    .set({
-                      totalReviews: 0,
-                      averageRating: 0,
-                      updatedAt: new Date(),
-                    })
-                    .where('id', '=', mediaItemId)
-                    .execute();
-                } else {
-                  const currentAvg = currentItem.averageRating
-                    ? parseFloat(currentItem.averageRating.toString())
-                    : 0;
-                  const newAverage =
-                    (currentAvg * currentItem.totalReviews -
-                      Number(oldRating)) /
-                    newTotalReviews;
-
-                  await ctx.db
-                    .updateTable('media_items')
-                    .set({
-                      totalReviews: newTotalReviews,
-                      averageRating: parseFloat(newAverage.toFixed(2)),
-                      updatedAt: new Date(),
-                    })
-                    .where('id', '=', mediaItemId)
-                    .execute();
-                }
-              }
-            }
-          }
-        }
 
         res.json({
           success: true,
@@ -1690,7 +1004,8 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
-  // DELETE /collections/:listUri/items/:itemUri - Delete an item from a collection
+  // DELETE /collections/:listUri/items/:itemUri - Remove an item from a collection
+  // Only removes list membership. The useritem record (status/rating/notes) is preserved.
   router.delete(
     '/:listUri/items/:itemUri',
     handler(async (req: Request, res: Response) => {
@@ -1705,106 +1020,33 @@ export const createRouter = (ctx: AppContext) => {
         const listUri = decodeURIComponent(req.params.listUri);
         const itemUri = decodeURIComponent(req.params.itemUri);
 
-        // Extract DID from listUri (format: at://did:plc:xxx/app.collectivesocial.list/xxx)
+        // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
         if (!listDidMatch) {
           return res.status(400).json({ error: 'Invalid list URI' });
         }
         const listOwnerDid = listDidMatch[1];
 
-        // Check if the authenticated user owns this list
         if (agent.did !== listOwnerDid) {
           return res
             .status(403)
             .json({ error: 'Not authorized to delete items from this list' });
         }
 
-        // Get the item first to retrieve its data before deletion (for rating adjustment)
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
-
-        const itemRecord = itemsResponse.data.records.find(
-          (record: any) => record.uri === itemUri
-        );
-
-        if (!itemRecord) {
-          return res.status(404).json({ error: 'Item not found' });
-        }
-
-        // Extract rkey from itemUri (format: at://did:plc:xxx/app.collectivesocial.listitem/rkey)
+        // Extract rkey from itemUri
         const rkeyMatch = itemUri.match(/\/([^\/]+)$/);
         if (!rkeyMatch) {
           return res.status(400).json({ error: 'Invalid item URI' });
         }
         const rkey = rkeyMatch[1];
 
-        // Delete the record from the user's repo
+        // Delete only the listitem record (list membership)
+        // The useritem record is NOT deleted — the user still "has" this media item
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
           collection: 'app.collectivesocial.feed.listitem',
           rkey: rkey,
         });
-
-        const itemData = itemRecord.value as any;
-
-        // Decrement totalSaves for this media item
-        if (itemData.mediaItemId) {
-          await ctx.db
-            .updateTable('media_items')
-            .set((eb) => ({
-              totalSaves: eb('totalSaves', '-', 1),
-              updatedAt: new Date(),
-            }))
-            .where('id', '=', itemData.mediaItemId)
-            .execute();
-        }
-
-        // If the item had a rating, update the aggregated review stats
-        if (itemData.mediaItemId && itemData.rating !== undefined) {
-          const currentItem = await ctx.db
-            .selectFrom('media_items')
-            .select(['totalReviews', 'averageRating'])
-            .where('id', '=', itemData.mediaItemId)
-            .executeTakeFirst();
-
-          if (currentItem && currentItem.totalReviews > 0) {
-            const newTotalReviews = currentItem.totalReviews - 1;
-
-            if (newTotalReviews === 0) {
-              // Reset to 0 if no more reviews
-              await ctx.db
-                .updateTable('media_items')
-                .set({
-                  totalReviews: 0,
-                  averageRating: 0,
-                  updatedAt: new Date(),
-                })
-                .where('id', '=', itemData.mediaItemId)
-                .execute();
-            } else {
-              // Recalculate average without this rating
-              const currentAvg = currentItem.averageRating
-                ? parseFloat(currentItem.averageRating.toString())
-                : 0;
-              const newAverage =
-                (currentAvg * currentItem.totalReviews -
-                  Number(itemData.rating)) /
-                newTotalReviews;
-
-              await ctx.db
-                .updateTable('media_items')
-                .set({
-                  totalReviews: newTotalReviews,
-                  averageRating: parseFloat(newAverage.toFixed(2)),
-                  updatedAt: new Date(),
-                })
-                .where('id', '=', itemData.mediaItemId)
-                .execute();
-            }
-          }
-        }
 
         res.json({ success: true });
       } catch (err) {
@@ -1896,6 +1138,7 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // GET /collections/public/:did/in-progress - Get in-progress items from public collections
+  // Now uses useritem records for status instead of listitem status
   router.get(
     '/public/:did/in-progress',
     handler(async (req: Request, res: Response) => {
@@ -1906,7 +1149,6 @@ export const createRouter = (ctx: AppContext) => {
       // Try to get authenticated agent, otherwise create unauthenticated one
       let queryAgent = await getSessionAgent(req, res, ctx);
       if (!queryAgent) {
-        // Create an unauthenticated agent for public queries
         queryAgent = new Agent({ service: 'https://bsky.social' });
       }
 
@@ -1918,7 +1160,6 @@ export const createRouter = (ctx: AppContext) => {
             collection: 'app.collectivesocial.feed.list',
           });
 
-        // Filter to only public collections
         const publicCollectionUris = collectionsResponse.data.records
           .filter((record: any) => {
             const visibility = record.value.visibility || 'public';
@@ -1934,33 +1175,64 @@ export const createRouter = (ctx: AppContext) => {
           }
         );
 
-        // Filter to in-progress items from public collections
+        // Get all useritem records for this user (status lives here now)
+        const useritemsResponse =
+          await queryAgent.api.com.atproto.repo.listRecords({
+            repo: did,
+            collection: 'app.collectivesocial.feed.useritem',
+          });
+
+        // Build a lookup map: mediaItemId → useritem data
+        const useritemsByMediaId: Record<number, any> = {};
+        for (const record of useritemsResponse.data.records) {
+          const val = record.value as any;
+          if (val.mediaItemId) {
+            useritemsByMediaId[val.mediaItemId] = {
+              uri: record.uri,
+              status: val.status || 'want',
+              rating: val.rating ?? null,
+              completedAt: val.completedAt || null,
+            };
+          }
+        }
+
+        // Filter to items from public collections whose useritem has in-progress status
         const inProgressItems = itemsResponse.data.records
           .filter((record: any) => {
             const listUri = record.value.list;
-            const status = record.value.status;
-            return (
-              publicCollectionUris.includes(listUri) && status === 'in-progress'
-            );
+            if (!publicCollectionUris.includes(listUri)) return false;
+            const useritem = record.value.mediaItemId
+              ? useritemsByMediaId[record.value.mediaItemId]
+              : null;
+            return useritem && useritem.status === 'in-progress';
           })
-          .map((record: any) => ({
-            uri: record.uri,
-            cid: record.cid,
-            title: record.value.title,
-            creator: record.value.creator || null,
-            mediaType: record.value.mediaType,
-            mediaItemId: record.value.mediaItemId || null,
-            status: record.value.status,
-            rating: record.value.rating || null,
-            review: record.value.review || null,
-            notes: record.value.notes || null,
-            completedAt: record.value.completedAt || null,
-            createdAt: record.value.createdAt,
-            listUri: record.value.list,
-          }));
+          .map((record: any) => {
+            const useritem = useritemsByMediaId[record.value.mediaItemId] || {};
+            return {
+              uri: record.uri,
+              cid: record.cid,
+              title: record.value.title,
+              creator: record.value.creator || null,
+              mediaType: record.value.mediaType,
+              mediaItemId: record.value.mediaItemId || null,
+              status: useritem.status || null,
+              rating: useritem.rating ?? null,
+              completedAt: useritem.completedAt || null,
+              createdAt: record.value.createdAt,
+              listUri: record.value.list,
+            };
+          });
 
-        // Fetch media items data for items that have mediaItemId
-        const mediaItemIds = inProgressItems
+        // Deduplicate by mediaItemId (same item could be in multiple public lists)
+        const seen = new Set<number>();
+        const uniqueInProgressItems = inProgressItems.filter((item) => {
+          if (!item.mediaItemId || seen.has(item.mediaItemId)) return false;
+          seen.add(item.mediaItemId);
+          return true;
+        });
+
+        // Fetch media items data
+        const mediaItemIds = uniqueInProgressItems
           .filter((item) => item.mediaItemId)
           .map((item) => item.mediaItemId);
 
@@ -1973,11 +1245,9 @@ export const createRouter = (ctx: AppContext) => {
                 .execute()
             : [];
 
-        // Create a map for quick lookup
         const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
 
-        // Attach media item data to list items
-        const itemsWithMediaData = inProgressItems.map((item) => ({
+        const itemsWithMediaData = uniqueInProgressItems.map((item) => ({
           ...item,
           mediaItem: item.mediaItemId
             ? mediaItemMap.get(item.mediaItemId)

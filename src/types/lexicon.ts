@@ -21,17 +21,11 @@ export namespace AppCollectiveSocialFeedList {
 }
 
 export namespace AppCollectiveSocialFeedListitem {
-  export interface Recommendation {
-    did: string;
-    suggestedAt: string;
-  }
-
   export interface Record {
     $type?: 'app.collectivesocial.feed.listitem';
     list: string; // AT-URI of the list
     title: string;
     creator?: string;
-    description?: string;
     order?: number; // Display order - higher numbers appear first
     mediaItemId?: number; // Reference to media_items table
     mediaType?:
@@ -42,11 +36,63 @@ export namespace AppCollectiveSocialFeedListitem {
       | 'article'
       | 'game'
       | 'music'
-      | 'course';
+      | 'course'
+      | 'video';
+    userItem?: string; // AT-URI of associated useritem record
+    createdAt: string;
+  }
+}
+
+export namespace AppCollectiveSocialFeedUseritem {
+  export interface Recommendation {
+    did: string;
+    suggestedAt: string;
+  }
+
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.useritem';
+    title: string;
+    creator?: string;
+    mediaItemId: number; // Reference to media_items table
+    mediaType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
     status?: 'want' | 'in-progress' | 'completed';
-    recommendations?: Recommendation[];
-    completedAt?: string; // Timestamp when completed
+    rating?: number; // 0-5, supports 0.5 increments
+    notes?: string; // Private notes
+    completedAt?: string; // Timestamp when most recently completed
     review?: string; // AT-URI of associated review record
+    recommendations?: Recommendation[];
+    createdAt: string;
+    updatedAt?: string;
+  }
+}
+
+export namespace AppCollectiveSocialFeedCompletion {
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.completion';
+    mediaItemId: number; // Reference to media_items table
+    mediaType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
+    completedAt: string; // When the user completed this media item
+    rating?: number; // Optional per-completion rating (0-5)
+    notes?: string; // Optional per-completion notes
+    review?: string; // AT-URI of associated review
     createdAt: string;
   }
 }
