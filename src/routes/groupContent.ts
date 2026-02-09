@@ -15,7 +15,6 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
   requireGroupMember,
-  requireGroupAdmin,
   GroupAuthRequest,
 } from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
@@ -39,8 +38,10 @@ const COL_REACTION = 'app.collectivesocial.group.reaction';
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router({ mergeParams: true });
 
+  // Membership middleware: authenticates and attaches groupAuth context.
+  // Fine-grained permission enforcement (member vs admin per collection)
+  // is handled by open-social when the record write is proxied.
   const memberOnly = requireGroupMember(ctx);
-  const adminOnly = [requireGroupMember(ctx), requireGroupAdmin(ctx)];
 
   // ═══════════════════════════════════════════════════════════════
   // LISTS
@@ -172,7 +173,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.put(
     '/lists/:rkey',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -210,7 +211,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.delete(
     '/lists/:rkey',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -357,7 +358,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.put(
     '/items/:rkey/status',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -422,7 +423,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.delete(
     '/items/:rkey',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -488,7 +489,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.post(
     '/items/:itemRkey/segments',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { itemRkey } = req.params;
@@ -607,7 +608,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.put(
     '/segments/:rkey',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -657,7 +658,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.delete(
     '/segments/:rkey',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
@@ -1019,7 +1020,7 @@ export const createRouter = (ctx: AppContext) => {
    */
   router.put(
     '/media/:mediaItemId/chapters',
-    ...adminOnly,
+    memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const mediaItemId = Number(req.params.mediaItemId);
       const { totalChapters, chapters } = req.body;

@@ -36,15 +36,15 @@ export function requireGroupMember(ctx: AppContext) {
 
       const membership = await opensocial.checkMembership(communityDid, agent.did);
 
-      if (!membership.is_member) {
+      if (!membership.isMember) {
         return res.status(403).json({ error: 'You are not a member of this community' });
       }
 
       req.groupAuth = {
         userDid: agent.did,
         communityDid,
-        isMember: membership.is_member,
-        isAdmin: membership.is_admin,
+        isMember: membership.isMember,
+        isAdmin: membership.isAdmin,
       };
 
       next();
@@ -85,11 +85,11 @@ export function requireGroupAdmin(ctx: AppContext) {
 
       const membership = await opensocial.checkMembership(communityDid, agent.did);
 
-      if (!membership.is_member) {
+      if (!membership.isMember) {
         return res.status(403).json({ error: 'You are not a member of this community' });
       }
 
-      if (!membership.is_admin) {
+      if (!membership.isAdmin) {
         return res.status(403).json({ error: 'Only community admins can perform this action' });
       }
 

@@ -3,7 +3,8 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import * as opensocial from '../services/opensocial';
-import { rkeyFromUri } from '../services/opensocial';
+import { rkeyFromUri, resolveUserPermissions } from '../services/opensocial';
+import type { ResolvedCollectionPermission } from '../services/opensocial';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -16,7 +17,8 @@ export const createRouter = (ctx: AppContext) => {
       const userDid = agent?.did ?? undefined;
 
       try {
-        const communities = await opensocial.listCommunities(userDid);
+        const query = typeof req.query.query === 'string' ? req.query.query.trim() : undefined;
+        const communities = await opensocial.listCommunities(userDid, query);
 
         // If user is authenticated, check which communities they're a member of
         const memberCommunityDids = new Set<string>();
@@ -73,8 +75,8 @@ export const createRouter = (ctx: AppContext) => {
         if (userDid) {
           try {
             const membership = await opensocial.checkMembership(did, userDid);
-            isMember = membership.is_member;
-            isAdmin = membership.is_admin;
+            isMember = membership.isMember;
+            isAdmin = membership.isAdmin;
           } catch (memberErr: any) {
             console.error(`Membership check failed for ${did}:`, memberErr.message || memberErr);
             // Not a member or check failed — that's fine for public view
@@ -116,11 +118,22 @@ export const createRouter = (ctx: AppContext) => {
           // Unable to fetch — that's okay
         }
 
+        // Resolve the current user's permissions for each collection.
+        // Returns resolved booleans based on the user's roles + community config.
+        // Cached for 60s in the opensocial client.
+        let permissions: Record<string, ResolvedCollectionPermission> = {};
+        try {
+          permissions = await resolveUserPermissions(did, userDid);
+        } catch (permErr: any) {
+          console.warn('Failed to resolve permissions:', permErr.message);
+        }
+
         return res.json({
           ...data,
           is_member: isMember,
           is_admin: isAdmin,
           member_count: memberCount,
+          permissions,
           lists,
           in_progress_items: inProgressItems,
         });

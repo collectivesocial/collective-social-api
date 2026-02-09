@@ -128,10 +128,13 @@ export async function listAllCommunityRecords<T = Record<string, unknown>>(
  * List all communities visible to this app.
  * Optionally pass a user DID to include is_admin flags.
  */
-export async function listCommunities(userDid?: string): Promise<Community[]> {
-  const params = userDid ? `?user_did=${encodeURIComponent(userDid)}` : '';
+export async function listCommunities(userDid?: string, query?: string): Promise<Community[]> {
+  const params = new URLSearchParams();
+  if (userDid) params.set('userDid', userDid);
+  if (query) params.set('query', query);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const data = await request<{ communities: Community[] }>(
-    `/api/v1/communities${params}`
+    `/api/v1/communities${qs}`
   );
   return data.communities;
 }
@@ -216,8 +219,9 @@ interface ListRecordsResponse {
 }
 
 interface MembershipCheckResponse {
-  is_member: boolean;
-  is_admin: boolean;
+  isMember: boolean;
+  isAdmin: boolean;
+  isPending?: boolean;
 }
 
 interface MemberInfo {
@@ -247,7 +251,7 @@ export async function createCommunityRecord(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
     {
       method: 'POST',
-      body: JSON.stringify({ user_did: userDid, collection, record, rkey }),
+      body: JSON.stringify({ userDid, collection, record: { $type: collection, ...record }, rkey }),
     }
   );
 }
@@ -267,7 +271,7 @@ export async function updateCommunityRecord(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
     {
       method: 'PUT',
-      body: JSON.stringify({ user_did: userDid, collection, rkey, record }),
+      body: JSON.stringify({ userDid, collection, rkey, record: { $type: collection, ...record } }),
     }
   );
 }
@@ -282,7 +286,7 @@ export async function deleteCommunityRecord(
   rkey: string
 ): Promise<{ success: boolean }> {
   return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}?user_did=${encodeURIComponent(userDid)}`,
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}?userDid=${encodeURIComponent(userDid)}`,
     { method: 'DELETE' }
   );
 }
@@ -328,7 +332,7 @@ export async function checkMembership(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/membership/check`,
     {
       method: 'POST',
-      body: JSON.stringify({ user_did: userDid }),
+      body: JSON.stringify({ userDid }),
     }
   );
 }
@@ -345,4 +349,125 @@ export async function listMembers(
   return request(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/members?${params.toString()}`
   );
+}
+
+// ── Permissions ───────────────────────────────────────────────────
+
+/** A single collection's permission row (role names like 'member', 'admin', or a custom role). */
+export interface CollectionPermission {
+  collection: string;
+  canCreate: string;
+  canRead: string;
+  canUpdate: string;
+  canDelete: string;
+}
+
+/** Resolved boolean permissions for one collection based on the user's roles. */
+export interface ResolvedCollectionPermission {
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+}
+
+interface PermissionsResponse {
+  permissions: CollectionPermission[];
+  userRoles: string[];
+}
+
+// In-memory permissions cache: keyed on "communityDid:userDid", TTL 60 s
+const permissionsCache = new Map<string, { data: PermissionsResponse; fetchedAt: number }>();
+const PERMISSIONS_CACHE_TTL = 60_000; // 60 seconds
+
+/**
+ * Fetch collection permissions + user roles from open-social in a single call.
+ * Cached for 60 seconds keyed on communityDid + userDid.
+ */
+export async function getCommunityPermissions(
+  communityDid: string,
+  userDid?: string
+): Promise<PermissionsResponse> {
+  const cacheKey = `${communityDid}:${userDid ?? ''}`;
+  const cached = permissionsCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < PERMISSIONS_CACHE_TTL) {
+    return cached.data;
+  }
+
+  const params = new URLSearchParams();
+  if (userDid) params.set('userDid', userDid);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+
+  const data = await request<PermissionsResponse>(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/permissions${qs}`
+  );
+
+  permissionsCache.set(cacheKey, { data, fetchedAt: Date.now() });
+  return data;
+}
+
+/**
+ * Resolve a user's effective boolean permissions for each collection.
+ *
+ * Matches the open-social `satisfiesRole` logic:
+ * - 'admin' role satisfies any required role
+ * - 'member' satisfies 'member'
+ * - custom roles require exact match or admin
+ *
+ * Returns a map like: { 'app.collectivesocial.group.list': { canCreate: true, ... }, ... }
+ *
+ * When no permission rows exist (app not enabled), falls back to hardcoded defaults.
+ */
+export async function resolveUserPermissions(
+  communityDid: string,
+  userDid?: string
+): Promise<Record<string, ResolvedCollectionPermission>> {
+  const { permissions, userRoles } = await getCommunityPermissions(communityDid, userDid);
+
+  const resolve = (requiredRole: string): boolean => {
+    if (!userDid || userRoles.length === 0) return false;
+    // Admin can do anything
+    if (userRoles.includes('admin')) return true;
+    // Built-in 'member' role
+    if (requiredRole === 'member') return userRoles.includes('member');
+    // Built-in 'admin' role
+    if (requiredRole === 'admin') return false;
+    // Custom role — exact match
+    return userRoles.includes(requiredRole);
+  };
+
+  // If we got permission rows from open-social, use them
+  if (permissions.length > 0) {
+    const result: Record<string, ResolvedCollectionPermission> = {};
+    for (const perm of permissions) {
+      result[perm.collection] = {
+        canCreate: resolve(perm.canCreate),
+        canRead: resolve(perm.canRead),
+        canUpdate: resolve(perm.canUpdate),
+        canDelete: resolve(perm.canDelete),
+      };
+    }
+    return result;
+  }
+
+  // Fallback: no permission rows (app not enabled yet).
+  // Use hardcoded defaults matching the original middleware behavior.
+  const DEFAULTS: Record<string, { c: string; r: string; u: string; d: string }> = {
+    'app.collectivesocial.group.list':            { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
+    'app.collectivesocial.group.listitem':        { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
+    'app.collectivesocial.group.listitem.status':  { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
+    'app.collectivesocial.group.segment':          { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
+    'app.collectivesocial.group.post':             { c: 'member', r: 'member', u: 'member', d: 'admin' },
+    'app.collectivesocial.group.reaction':         { c: 'member', r: 'member', u: 'member', d: 'member' },
+  };
+
+  const result: Record<string, ResolvedCollectionPermission> = {};
+  for (const [col, def] of Object.entries(DEFAULTS)) {
+    result[col] = {
+      canCreate: resolve(def.c),
+      canRead: resolve(def.r),
+      canUpdate: resolve(def.u),
+      canDelete: resolve(def.d),
+    };
+  }
+  return result;
 }
