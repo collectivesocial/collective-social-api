@@ -25,6 +25,9 @@ import {
   notifyAllMembers,
   notifyUsers,
 } from '../services/notifications';
+import * as groupPostService from '../services/groupPosts';
+import * as userProfileService from '../services/userProfiles';
+import { getSessionAgent } from '../auth/agent';
 
 // ── Collection constants ──────────────────────────────────────────
 
@@ -953,21 +956,48 @@ export const createRouter = (ctx: AppContext) => {
       const { communityDid } = req.groupAuth!;
       const { segmentRkey } = req.params;
 
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
       let segment: PdsRecord;
       try {
         segment = await opensocial.getCommunityRecord(
-          communityDid, COL_SEGMENT, segmentRkey
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
         );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
-      const segmentPosts = allPosts
-        .filter((r: any) => r.value.segmentUri === segment.uri)
-        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
+      try {
+        // Fetch posts using new dual-storage pattern with legacy support
+        const posts = await groupPostService.fetchGroupPostsWithLegacy(
+          agent,
+          communityDid,
+          {
+            segmentUri: segment.uri,
+          }
+        );
 
-      return res.json({ posts: buildThreads(segmentPosts) });
+        // Enrich with user profiles
+        const dids = userProfileService.extractDidsFromPosts(posts);
+        const profiles = await userProfileService.enrichWithUserProfiles(dids);
+
+        // Build threads with author profiles
+        const threads = groupPostService.buildThreads(posts);
+        const enrichedThreads = userProfileService.buildThreadsWithProfiles(
+          threads,
+          profiles
+        );
+
+        return res.json({ posts: enrichedThreads });
+      } catch (err) {
+        console.error('Failed to fetch posts:', err);
+        return res.status(500).json({ error: 'Failed to fetch posts' });
+      }
     })
   );
 
@@ -982,21 +1012,48 @@ export const createRouter = (ctx: AppContext) => {
       const { communityDid } = req.groupAuth!;
       const { itemRkey } = req.params;
 
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
       let item: PdsRecord;
       try {
         item = await opensocial.getCommunityRecord(
-          communityDid, COL_LISTITEM, itemRkey
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
         );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
-      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
-      const itemPosts = allPosts
-        .filter((r: any) => r.value.listItemUri === item.uri)
-        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
+      try {
+        // Fetch posts using new dual-storage pattern with legacy support
+        const posts = await groupPostService.fetchGroupPostsWithLegacy(
+          agent,
+          communityDid,
+          {
+            listItemUri: item.uri,
+          }
+        );
 
-      return res.json({ posts: buildThreads(itemPosts) });
+        // Enrich with user profiles
+        const dids = userProfileService.extractDidsFromPosts(posts);
+        const profiles = await userProfileService.enrichWithUserProfiles(dids);
+
+        // Build threads with author profiles
+        const threads = groupPostService.buildThreads(posts);
+        const enrichedThreads = userProfileService.buildThreadsWithProfiles(
+          threads,
+          profiles
+        );
+
+        return res.json({ posts: enrichedThreads });
+      } catch (err) {
+        console.error('Failed to fetch posts:', err);
+        return res.status(500).json({ error: 'Failed to fetch posts' });
+      }
     })
   );
 
@@ -1014,112 +1071,132 @@ export const createRouter = (ctx: AppContext) => {
       const { text, segmentUri, listItemUri, parentPostUri, mentionedDids } =
         req.body;
 
-      if (!text) {
+      if (!text?.trim()) {
         return res.status(400).json({ error: 'text is required' });
       }
 
-      const now = new Date().toISOString();
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
 
-      const pdsRecord = await opensocial.createCommunityRecord(
-        communityDid,
-        userDid,
-        COL_POST,
-        {
-          text,
-          segmentUri: segmentUri || null,
-          listItemUri: listItemUri || null,
-          parentPostUri: parentPostUri || null,
-          authorDid: userDid,
-          mentionedDids: mentionedDids || [],
-          createdAt: now,
-        }
-      );
+      try {
+        // Create post using dual-storage pattern (user repo + group index)
+        const { postUri, indexUri } = await groupPostService.createGroupPost(
+          agent,
+          userDid,
+          communityDid,
+          {
+            text: text.trim(),
+            segmentUri,
+            listItemUri,
+            parentPostUri,
+            mentionedDids: mentionedDids || [],
+          }
+        );
 
-      // Notifications
-      if (parentPostUri) {
-        // Find parent post author from PDS
-        const parentRkey = rkeyFromUri(parentPostUri);
-        try {
-          const parentPost = await opensocial.getCommunityRecord(
-            communityDid, COL_POST, parentRkey
-          );
-          const parentAuthor = (parentPost.value as any).authorDid;
-          if (parentAuthor) {
+        // Notifications
+        if (parentPostUri) {
+          // Extract author DID from parent post URI
+          const parentMatch = parentPostUri.match(/at:\/\/([^\/]+)\//);
+          const parentAuthor = parentMatch ? parentMatch[1] : null;
+          if (parentAuthor && parentAuthor !== userDid) {
             await createNotification(ctx.db, {
               communityDid,
               recipientDid: parentAuthor,
               actorDid: userDid,
               type: 'reply',
-              subjectUri: pdsRecord.uri,
+              subjectUri: postUri,
               subjectType: 'post',
               message: 'replied to your post',
             });
           }
-        } catch {
-          // Parent post lookup failed — skip reply notification
-        }
-      } else {
-        await notifyAllMembers(ctx.db, communityDid, userDid, 'new_post', {
-          subjectUri: pdsRecord.uri,
-          subjectType: 'post',
-          message: 'posted in the discussion',
-        });
-      }
-
-      if (mentionedDids?.length) {
-        await notifyUsers(
-          ctx.db, communityDid, userDid, mentionedDids, 'mention',
-          {
-            subjectUri: pdsRecord.uri,
+        } else {
+          await notifyAllMembers(ctx.db, communityDid, userDid, 'new_post', {
+            subjectUri: postUri,
             subjectType: 'post',
-            message: 'mentioned you in a post',
-          }
-        );
-      }
+            message: 'posted in the discussion',
+          });
+        }
 
-      return res.json({
-        post: {
-          uri: pdsRecord.uri,
-          rkey: rkeyFromUri(pdsRecord.uri),
-          text,
-          segmentUri,
-          listItemUri,
-          parentPostUri,
-          authorDid: userDid,
-          createdAt: now,
-        },
-      });
+        if (mentionedDids?.length) {
+          await notifyUsers(
+            ctx.db,
+            communityDid,
+            userDid,
+            mentionedDids,
+            'mention',
+            {
+              subjectUri: postUri,
+              subjectType: 'post',
+              message: 'mentioned you in a post',
+            }
+          );
+        }
+
+        return res.json({
+          success: true,
+          postUri,
+          indexUri,
+        });
+      } catch (err) {
+        console.error('Failed to create post:', err);
+        return res.status(500).json({ error: 'Failed to create post' });
+      }
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/posts/:rkey
+   * DELETE /groups/:communityDid/posts
    * Delete a post. Author or admin can delete.
+   * Body: { postUri }
    */
   router.delete(
-    '/posts/:rkey',
+    '/posts',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid, isAdmin } = req.groupAuth!;
-      const { rkey } = req.params;
+      const { postUri } = req.body;
 
-      let post: PdsRecord;
+      if (!postUri) {
+        return res.status(400).json({ error: 'Post URI is required' });
+      }
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
       try {
-        post = await opensocial.getCommunityRecord(communityDid, COL_POST, rkey);
-      } catch {
-        return res.status(404).json({ error: 'Post not found' });
+        // Extract author DID from URI
+        const match = postUri.match(/at:\/\/([^\/]+)\//);
+        const authorDid = match ? match[1] : null;
+
+        if (!authorDid) {
+          return res.status(400).json({ error: 'Invalid post URI' });
+        }
+
+        if (authorDid === userDid) {
+          // User deleting their own post
+          await groupPostService.deleteGroupPost(agent, postUri);
+        } else if (isAdmin) {
+          // Admin marking post as deleted
+          await groupPostService.adminDeleteGroupPost(
+            communityDid,
+            userDid,
+            postUri
+          );
+        } else {
+          return res.status(403).json({
+            error: 'Only the author or an admin can delete this post',
+          });
+        }
+
+        return res.json({ success: true });
+      } catch (err) {
+        console.error('Failed to delete post:', err);
+        return res.status(500).json({ error: 'Failed to delete post' });
       }
-
-      const authorDid = (post.value as any).authorDid;
-      if (authorDid !== userDid && !isAdmin) {
-        return res
-          .status(403)
-          .json({ error: 'Only the author or an admin can delete this post' });
-      }
-
-      await deletePostAndReactions(communityDid, userDid, post.uri);
-
-      return res.json({ success: true });
     })
   );
 

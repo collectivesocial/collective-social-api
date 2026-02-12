@@ -1,0 +1,51 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.group.postindex",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Index entry in community repo pointing to a user's personal group post.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["postUri", "authorDid", "createdAt"],
+        "properties": {
+          "postUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the post in the author's personal repo."
+          },
+          "authorDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the post author."
+          },
+          "segmentUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional segment reference for filtering."
+          },
+          "listItemUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional list item reference for filtering."
+          },
+          "parentPostUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional parent post reference for threading."
+          },
+          "deletedByAdmin": {
+            "type": "boolean",
+            "description": "True if admin has marked this post as deleted (moderation)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when the post was created."
+          }
+        }
+      }
+    }
+  }
+}

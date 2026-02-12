@@ -1,0 +1,56 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.grouppost",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A user's post in a group discussion context, stored in the user's personal repo.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["text", "groupDid", "createdAt"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The post content.",
+            "maxGraphemes": 5000,
+            "maxLength": 50000
+          },
+          "groupDid": {
+            "type": "string",
+            "format": "did",
+            "description": "The community/group DID this post belongs to."
+          },
+          "segmentUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference to the group segment being discussed."
+          },
+          "listItemUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference to the group list item being discussed."
+          },
+          "parentPostUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference to parent post for threaded replies."
+          },
+          "mentionedDids": {
+            "type": "array",
+            "description": "Array of DIDs mentioned in the post for notifications.",
+            "items": {
+              "type": "string",
+              "format": "did"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this post was created."
+          }
+        }
+      }
+    }
+  }
+}
