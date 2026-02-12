@@ -535,6 +535,215 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  // POST /collections/quick-add — add an item to the user's default list
+  // If no default list exists, creates one. If item is already tracked, returns existing.
+  // Used by group context to sync items to personal library.
+  router.post(
+    '/quick-add',
+    handler(async (req: Request, res: Response) => {
+      res.setHeader('cache-control', 'no-store');
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { mediaItemId, mediaType, title, creator, status } = req.body;
+
+      if (!title) {
+        return res.status(400).json({ error: 'title is required' });
+      }
+
+      try {
+        // Find the user's default list
+        const listsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.list',
+        });
+
+        let defaultListUri: string | null = null;
+
+        for (const record of listsResponse.data.records) {
+          if ((record.value as any).isDefault === true) {
+            defaultListUri = record.uri;
+            break;
+          }
+        }
+
+        // Create a default list if none exists
+        if (!defaultListUri) {
+          const listRecord: AppCollectiveSocialFeedList.Record = {
+            $type: 'app.collectivesocial.feed.list',
+            name: 'My Library',
+            visibility: 'public',
+            purpose: 'app.collectivesocial.defs#curatelist',
+            isDefault: true,
+            createdAt: new Date().toISOString(),
+          };
+
+          const createRes = await agent.api.com.atproto.repo.createRecord({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.list',
+            record: listRecord as any,
+          });
+          defaultListUri = createRes.data.uri;
+        }
+
+        // Check for existing item in the default list
+        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+        });
+
+        const existingItem = itemsResponse.data.records.find((record: any) => {
+          const val = record.value as any;
+          if (val.list !== defaultListUri) return false;
+          if (mediaItemId) return val.mediaItemId === mediaItemId;
+          return val.title === title;
+        });
+
+        if (existingItem) {
+          // Already tracked — optionally upgrade status
+          const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.useritem',
+          });
+          const useritem = mediaItemId
+            ? useritemsResponse.data.records.find(
+                (r: any) => r.value.mediaItemId === mediaItemId
+              )
+            : null;
+
+          // If caller wants 'in-progress' and current is 'want', upgrade
+          if (
+            status === 'in-progress' &&
+            useritem &&
+            (useritem.value as any).status === 'want'
+          ) {
+            const existingVal = useritem.value as any;
+            await agent.api.com.atproto.repo.putRecord({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.useritem',
+              rkey: useritem.uri.split('/').pop()!,
+              record: {
+                ...existingVal,
+                status: 'in-progress',
+                updatedAt: new Date().toISOString(),
+              },
+            });
+          }
+
+          return res.json({
+            uri: existingItem.uri,
+            alreadyExists: true,
+            listUri: defaultListUri,
+            userItemUri: (existingItem.value as any).userItem || null,
+          });
+        }
+
+        // Ensure a useritem record exists
+        let userItemUri: string | null = null;
+        const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.useritem',
+        });
+
+        const existingUseritem = mediaItemId
+          ? useritemsResponse.data.records.find(
+              (r: any) => r.value.mediaItemId === mediaItemId
+            )
+          : null;
+
+        if (existingUseritem) {
+          userItemUri = existingUseritem.uri;
+
+          // Upgrade status if needed
+          if (
+            status === 'in-progress' &&
+            (existingUseritem.value as any).status === 'want'
+          ) {
+            const existingVal = existingUseritem.value as any;
+            await agent.api.com.atproto.repo.putRecord({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.useritem',
+              rkey: existingUseritem.uri.split('/').pop()!,
+              record: {
+                ...existingVal,
+                status: 'in-progress',
+                updatedAt: new Date().toISOString(),
+              },
+            });
+          }
+        } else {
+          const now = new Date().toISOString();
+          const useritemRecord: AppCollectiveSocialFeedUseritem.Record = {
+            $type: 'app.collectivesocial.feed.useritem',
+            title,
+            creator: creator || undefined,
+            mediaItemId: mediaItemId || undefined,
+            mediaType: mediaType || undefined,
+            status: status || 'want',
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          const useritemRes = await agent.api.com.atproto.repo.createRecord({
+            repo: agent.did!,
+            collection: 'app.collectivesocial.feed.useritem',
+            record: useritemRecord as any,
+          });
+          userItemUri = useritemRes.data.uri;
+
+          if (mediaItemId) {
+            await ctx.db
+              .updateTable('media_items')
+              .set((eb) => ({
+                totalSaves: eb('totalSaves', '+', 1),
+                updatedAt: new Date(),
+              }))
+              .where('id', '=', mediaItemId)
+              .execute();
+          }
+        }
+
+        // Create the listitem
+        const existingInList = itemsResponse.data.records
+          .filter((r: any) => r.value.list === defaultListUri)
+          .map((r: any) => r.value.order || 0);
+        const maxOrder = existingInList.length > 0 ? Math.max(...existingInList) : 0;
+
+        const now = new Date();
+        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
+          $type: 'app.collectivesocial.feed.listitem',
+          list: defaultListUri!,
+          title,
+          creator: creator || undefined,
+          order: maxOrder + 1,
+          mediaItemId: mediaItemId || undefined,
+          mediaType: mediaType || undefined,
+          userItem: userItemUri || undefined,
+          createdAt: now.toISOString(),
+        };
+
+        const response = await agent.api.com.atproto.repo.createRecord({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.listitem',
+          record: listItemRecord as any,
+        });
+
+        return res.json({
+          uri: response.data.uri,
+          created: true,
+          listUri: defaultListUri,
+          userItemUri,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to quick-add item');
+        return res.status(500).json({ error: 'Failed to quick-add item' });
+      }
+    })
+  );
+
   // POST /collections/:listUri/items - Add an item to a collection
   // Creates a lightweight listitem (list membership) and ensures a useritem exists
   router.post(

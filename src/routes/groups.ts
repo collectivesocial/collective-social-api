@@ -56,6 +56,29 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
+  /**
+   * GET /groups/:did/permissions
+   * Lightweight endpoint that returns ONLY the user's resolved permissions.
+   * Costs 1 open-social call (cached for 60s) instead of the ~8 calls that
+   * the full GET /groups/:did route makes.
+   */
+  router.get(
+    '/:did/permissions',
+    handler(async (req: Request, res: Response) => {
+      const { did } = req.params;
+      const agent = await getSessionAgent(req, res, ctx);
+      const userDid = agent?.did ?? undefined;
+
+      try {
+        const permissions = await resolveUserPermissions(did, userDid);
+        return res.json({ permissions });
+      } catch (err: any) {
+        console.error('Error resolving permissions:', err.message);
+        return res.status(err.status || 500).json({ error: err.message });
+      }
+    })
+  );
+
   // GET /groups/:did — get a single community's full details
   // Includes public lists and in-progress items for the group detail page.
   // Works for both authenticated members and unauthenticated visitors.

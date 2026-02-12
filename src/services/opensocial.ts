@@ -456,6 +456,7 @@ export async function resolveUserPermissions(
     'app.collectivesocial.group.listitem':        { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
     'app.collectivesocial.group.listitem.status':  { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
     'app.collectivesocial.group.segment':          { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
+    'app.collectivesocial.group.segment.progress':  { c: 'member', r: 'member', u: 'member', d: 'member' },
     'app.collectivesocial.group.post':             { c: 'member', r: 'member', u: 'member', d: 'admin' },
     'app.collectivesocial.group.reaction':         { c: 'member', r: 'member', u: 'member', d: 'member' },
   };

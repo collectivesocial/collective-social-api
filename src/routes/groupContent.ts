@@ -32,6 +32,7 @@ const COL_LIST = 'app.collectivesocial.group.list';
 const COL_LISTITEM = 'app.collectivesocial.group.listitem';
 const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
 const COL_SEGMENT = 'app.collectivesocial.group.segment';
+const COL_SEGMENT_PROGRESS = 'app.collectivesocial.group.segment.progress';
 const COL_POST = 'app.collectivesocial.group.post';
 const COL_REACTION = 'app.collectivesocial.group.reaction';
 
@@ -477,6 +478,59 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   /**
+   * GET /groups/:communityDid/items/:itemRkey/progress
+   * Batch-fetch all segment progress for all segments of an item.
+   * Returns a map keyed by segment URI → array of progress records.
+   * This replaces N individual /segments/:rkey/progress calls with ONE call.
+   */
+  router.get(
+    '/items/:itemRkey/progress',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const { itemRkey } = req.params;
+
+      let item: PdsRecord;
+      try {
+        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+      } catch {
+        return res.status(404).json({ error: 'Item not found' });
+      }
+
+      // Get all segments for this item
+      const allSegments = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT);
+      const itemSegments = allSegments.filter(
+        (r: any) => r.value.listItemUri === item.uri
+      );
+      const segmentUris = new Set(itemSegments.map((s) => s.uri));
+
+      // Get ALL progress records once (not per-segment)
+      let allProgress: PdsRecord[] = [];
+      try {
+        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      } catch (err) {
+        console.error('Failed to list segment progress:', err);
+      }
+
+      // Group progress by segment URI
+      const progressBySegment: Record<string, Array<{ uri: string; rkey: string; [k: string]: unknown }>> = {};
+      for (const p of allProgress) {
+        const segUri = (p.value as any).segmentUri as string;
+        if (segmentUris.has(segUri)) {
+          if (!progressBySegment[segUri]) progressBySegment[segUri] = [];
+          progressBySegment[segUri].push({
+            uri: p.uri,
+            rkey: rkeyFromUri(p.uri),
+            ...p.value,
+          });
+        }
+      }
+
+      return res.json({ progressBySegment });
+    })
+  );
+
+  /**
    * POST /groups/:communityDid/items/:itemRkey/segments
    * Create a reading assignment segment. Admin only.
    *
@@ -671,6 +725,17 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
+      // Delete progress records for this segment
+      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      const segProgress = allProgress.filter(
+        (r: any) => r.value.segmentUri === segment.uri
+      );
+      for (const prog of segProgress) {
+        await opensocial.deleteCommunityRecord(
+          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
+        );
+      }
+
       // Delete child posts + reactions
       const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
       const segmentPosts = allPosts.filter(
@@ -681,6 +746,193 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT, rkey);
+
+      return res.json({ success: true });
+    })
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // SEGMENT PROGRESS (per-member completion tracking)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/progress
+   * List all members' progress for a segment (powers the roster view).
+   */
+  router.get(
+    '/segments/:segmentRkey/progress',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const { segmentRkey } = req.params;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      const segmentProgress = allProgress
+        .filter((r: any) => r.value.segmentUri === segment.uri)
+        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
+
+      return res.json({ progress: segmentProgress });
+    })
+  );
+
+  /**
+   * POST /groups/:communityDid/segments/:segmentRkey/progress
+   * Mark the current user as having completed a segment.
+   * Also syncs to the user's personal progress (reviewsegment + useritem).
+   *
+   * Body: {} (no fields needed — uses auth context)
+   */
+  router.post(
+    '/segments/:segmentRkey/progress',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const { segmentRkey } = req.params;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      // Check for duplicate — member may have already marked this segment
+      let allProgress: PdsRecord[];
+      try {
+        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      } catch (err) {
+        console.error('Failed to list segment progress records:', err);
+        allProgress = [];
+      }
+
+      const existing = allProgress.find(
+        (r: any) => r.value.segmentUri === segment.uri && r.value.memberDid === userDid
+      );
+      if (existing) {
+        return res.json({
+          progress: { uri: existing.uri, rkey: rkeyFromUri(existing.uri), ...existing.value },
+          alreadyExists: true,
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      let pdsRecord;
+      try {
+        pdsRecord = await opensocial.createCommunityRecord(
+          communityDid,
+          userDid,
+          COL_SEGMENT_PROGRESS,
+          {
+            segmentUri: segment.uri,
+            memberDid: userDid,
+            completed: true,
+            completedAt: now,
+          }
+        );
+      } catch (err: any) {
+        console.error('Failed to create segment progress record:', err);
+        return res.status(err.status || 500).json({
+          error: err.message || 'Failed to create progress record',
+        });
+      }
+
+      // ── Sync to personal progress ──────────────────────────────
+      // If the segment has an endPercent, create/update a personal
+      // reviewsegment at that percentage for the user's library.
+      const segVal = segment.value as any;
+      if (segVal.endPercent != null) {
+        try {
+          // Forward to the personal reviewsegment endpoint
+          // This is an internal call — the user's session cookie is on the request
+          const itemRecord = await opensocial.getCommunityRecord(
+            communityDid, COL_LISTITEM, rkeyFromUri(segVal.listItemUri)
+          );
+          const itemVal = itemRecord.value as any;
+
+          if (itemVal.mediaItemId) {
+            // Create personal review segment via internal API call
+            const syncBody = {
+              percentage: segVal.endPercent,
+              title: segVal.label,
+              mediaItemId: itemVal.mediaItemId,
+              mediaType: itemVal.mediaType,
+            };
+
+            // Use the user's cookie to call the personal reviewsegment endpoint
+            const cookie = req.headers.cookie;
+            if (cookie) {
+              const baseUrl = `${req.protocol}://${req.get('host')}`;
+              await fetch(`${baseUrl}/reviewsegments`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Cookie: cookie,
+                },
+                body: JSON.stringify(syncBody),
+              }).catch((err) => {
+                console.warn('Failed to sync personal review segment:', err);
+              });
+
+              // Also ensure the user's personal useritem status is 'in-progress'
+              // if it's currently 'want'. We do this via the quick-add endpoint
+              // which handles finding/creating the default list and upserting useritem.
+              await fetch(`${baseUrl}/collections/quick-add`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Cookie: cookie,
+                },
+                body: JSON.stringify({
+                  mediaItemId: itemVal.mediaItemId,
+                  mediaType: itemVal.mediaType,
+                  title: itemVal.title,
+                  creator: itemVal.creator,
+                  status: 'in-progress',
+                }),
+              }).catch((err) => {
+                console.warn('Failed to sync personal collection:', err);
+              });
+            }
+          }
+        } catch (syncErr) {
+          console.warn('Failed to sync personal progress:', syncErr);
+          // Non-fatal — the group progress is still recorded
+        }
+      }
+
+      return res.json({
+        progress: {
+          uri: pdsRecord.uri,
+          rkey: rkeyFromUri(pdsRecord.uri),
+          segmentUri: segment.uri,
+          memberDid: userDid,
+          completed: true,
+          completedAt: now,
+        },
+      });
+    })
+  );
+
+  /**
+   * DELETE /groups/:communityDid/segments/:segmentRkey/progress/:rkey
+   * Unmark the current user's completion of a segment.
+   */
+  router.delete(
+    '/segments/:segmentRkey/progress/:rkey',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const { rkey } = req.params;
+
+      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT_PROGRESS, rkey);
 
       return res.json({ success: true });
     })
@@ -1215,6 +1467,19 @@ export const createRouter = (ctx: AppContext) => {
       (r: any) => r.value.listItemUri === itemUri
     );
     for (const seg of itemSegments) {
+      // Delete progress records for this segment
+      const allProgress = await opensocial.listAllCommunityRecords(
+        communityDid, COL_SEGMENT_PROGRESS
+      );
+      const segProgress = allProgress.filter(
+        (r: any) => r.value.segmentUri === seg.uri
+      );
+      for (const prog of segProgress) {
+        await opensocial.deleteCommunityRecord(
+          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
+        );
+      }
+
       // Delete posts for this segment
       const allPosts = await opensocial.listAllCommunityRecords(
         communityDid, COL_POST
