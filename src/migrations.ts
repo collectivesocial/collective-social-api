@@ -493,9 +493,24 @@ migrations['001'] = {
   },
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Migrations 002–025: No-op stubs
+// The original incremental migrations have been consolidated into 001 above.
+// These empty entries exist so that databases which already executed 002–025
+// don't trigger Kysely's "corrupted migrations: previously executed migration
+// … is missing" error.
+// ────────────────────────────────────────────────────────────────────────────
+for (let i = 2; i <= 25; i++) {
+  const key = String(i).padStart(3, '0');
+  migrations[key] = {
+    async up(_db: Kysely<any>) { /* already applied via consolidated 001 */ },
+    async down(_db: Kysely<any>) { /* no-op */ },
+  };
+}
+
 export { migrations, migrationProvider };
 
-export const migrateToLatest = async (db: Kysely<unknown>) => {
+export const migrateToLatest = async (db: Kysely<any>) => {
   const migrator = new Migrator({ db, provider: migrationProvider });
   const { error, results } = await migrator.migrateToLatest();
   results?.forEach((r) => {

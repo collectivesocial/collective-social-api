@@ -1,3 +1,5 @@
+import path from 'path';
+
 import { Agent } from '@atproto/api';
 import { OAuthResolverError } from '@atproto/oauth-client-node';
 import express, { Request, Response } from 'express';
