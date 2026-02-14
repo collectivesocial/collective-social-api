@@ -1,0 +1,547 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.createRouter = void 0;
+const express_1 = __importDefault(require("express"));
+const http_1 = require("../lib/http");
+const agent_1 = require("../auth/agent");
+const crypto_1 = require("crypto");
+const config_1 = require("../config");
+// Generate a URL-safe random string
+const generateShortCode = (length = 10) => {
+    return (0, crypto_1.randomBytes)(length).toString('base64url').slice(0, length);
+};
+const createRouter = (ctx) => {
+    const router = express_1.default.Router();
+    // POST /share - Create a share link for a media item or collection
+    router.post('/', (0, http_1.handler)(async (req, res) => {
+        const agent = await (0, agent_1.getSessionAgent)(req, res, ctx);
+        if (!agent) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        const { mediaItemId, mediaType, collectionUri, reviewId } = req.body;
+        // Validate: must provide either media item, collection, or review, not multiple
+        const providedTypes = [mediaItemId, collectionUri, reviewId].filter(Boolean).length;
+        if (providedTypes === 0) {
+            return res.status(400).json({
+                error: 'Provide either mediaItemId and mediaType, collectionUri, or reviewId',
+            });
+        }
+        if (providedTypes > 1) {
+            return res.status(400).json({
+                error: 'Provide only one of: mediaItemId and mediaType, collectionUri, or reviewId',
+            });
+        }
+        if (mediaItemId && !mediaType) {
+            return res.status(400).json({
+                error: 'mediaType is required when sharing a media item',
+            });
+        }
+        try {
+            const userDid = agent.did;
+            // Get the client URL from Origin header or fallback to localhost
+            const origin = req.get('origin') || 'http://127.0.0.1:5173';
+            // Check if a share link already exists
+            let existing;
+            if (reviewId) {
+                existing = await ctx.db
+                    .selectFrom('share_links')
+                    .selectAll()
+                    .where('userDid', '=', userDid)
+                    .where('reviewId', '=', reviewId)
+                    .executeTakeFirst();
+            }
+            else if (collectionUri) {
+                existing = await ctx.db
+                    .selectFrom('share_links')
+                    .selectAll()
+                    .where('userDid', '=', userDid)
+                    .where('collectionUri', '=', collectionUri)
+                    .executeTakeFirst();
+            }
+            else {
+                existing = await ctx.db
+                    .selectFrom('share_links')
+                    .selectAll()
+                    .where('userDid', '=', userDid)
+                    .where('mediaItemId', '=', mediaItemId)
+                    .where('mediaType', '=', mediaType)
+                    .executeTakeFirst();
+            }
+            if (existing) {
+                // Get title for response
+                let title = null;
+                if (reviewId) {
+                    // Get review and media item details
+                    const review = await ctx.db
+                        .selectFrom('reviews')
+                        .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+                        .select(['media_items.title'])
+                        .where('reviews.id', '=', reviewId)
+                        .executeTakeFirst();
+                    title = review?.title ? `Review: ${review.title}` : null;
+                }
+                else if (collectionUri) {
+                    // Fetch collection name from ATProto
+                    const listsResponse = await agent.api.com.atproto.repo.listRecords({
+                        repo: agent.did,
+                        collection: 'app.collectivesocial.feed.list',
+                    });
+                    const collection = listsResponse.data.records.find((record) => record.uri === collectionUri);
+                    title = collection?.value?.name || null;
+                }
+                else {
+                    // Get media item details
+                    const mediaItem = await ctx.db
+                        .selectFrom('media_items')
+                        .select(['title'])
+                        .where('id', '=', mediaItemId)
+                        .executeTakeFirst();
+                    title = mediaItem?.title || null;
+                }
+                // Return existing share link
+                return res.json({
+                    shortCode: existing.shortCode,
+                    url: `${origin}/share/${existing.shortCode}`,
+                    timesClicked: existing.timesClicked,
+                    title,
+                });
+            }
+            // Generate a unique short code
+            let shortCode = generateShortCode(10);
+            let attempts = 0;
+            const maxAttempts = 5;
+            // Ensure uniqueness (very unlikely to collide, but just in case)
+            while (attempts < maxAttempts) {
+                const collision = await ctx.db
+                    .selectFrom('share_links')
+                    .select('id')
+                    .where('shortCode', '=', shortCode)
+                    .executeTakeFirst();
+                if (!collision)
+                    break;
+                shortCode = generateShortCode(10);
+                attempts++;
+            }
+            if (attempts === maxAttempts) {
+                return res.status(500).json({
+                    error: 'Failed to generate unique share code',
+                });
+            }
+            // Create the share link
+            const now = new Date();
+            const shareLink = await ctx.db
+                .insertInto('share_links')
+                .values({
+                shortCode,
+                userDid,
+                mediaItemId: mediaItemId || null,
+                mediaType: mediaType || null,
+                collectionUri: collectionUri || null,
+                reviewId: reviewId || null,
+                timesClicked: 0,
+                createdAt: now,
+                updatedAt: now,
+            })
+                .returningAll()
+                .executeTakeFirstOrThrow();
+            // Get title for response
+            let title = null;
+            if (reviewId) {
+                // Get review and media item details
+                const review = await ctx.db
+                    .selectFrom('reviews')
+                    .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+                    .select(['media_items.title'])
+                    .where('reviews.id', '=', reviewId)
+                    .executeTakeFirst();
+                title = review?.title ? `Review: ${review.title}` : null;
+            }
+            else if (collectionUri) {
+                // Fetch collection name from ATProto
+                const listsResponse = await agent.api.com.atproto.repo.listRecords({
+                    repo: agent.did,
+                    collection: 'app.collectivesocial.feed.list',
+                });
+                const collection = listsResponse.data.records.find((record) => record.uri === collectionUri);
+                title = collection?.value?.name || null;
+            }
+            else {
+                // Get media item details
+                const mediaItem = await ctx.db
+                    .selectFrom('media_items')
+                    .select(['title'])
+                    .where('id', '=', mediaItemId)
+                    .executeTakeFirst();
+                title = mediaItem?.title || null;
+            }
+            ctx.logger.info({
+                userDid,
+                mediaItemId,
+                mediaType,
+                collectionUri,
+                reviewId,
+                shortCode,
+            }, 'Share link created');
+            res.json({
+                shortCode: shareLink.shortCode,
+                url: `${origin}/share/${shareLink.shortCode}`,
+                timesClicked: shareLink.timesClicked,
+                title,
+            });
+        }
+        catch (err) {
+            ctx.logger.error({ err }, 'Failed to create share link');
+            res.status(500).json({ error: 'Failed to create share link' });
+        }
+    }));
+    // GET /:shortCode - Resolve a share link and increment counter
+    router.get('/:shortCode', async (req, res) => {
+        const { shortCode } = req.params;
+        try {
+            // Find the share link
+            const shareLink = await ctx.db
+                .selectFrom('share_links')
+                .selectAll()
+                .where('shortCode', '=', shortCode)
+                .executeTakeFirst();
+            if (!shareLink) {
+                return res.status(404).json({ error: 'Share link not found' });
+            }
+            // Increment the times clicked counter
+            await ctx.db
+                .updateTable('share_links')
+                .set({
+                timesClicked: shareLink.timesClicked + 1,
+                updatedAt: new Date(),
+            })
+                .where('id', '=', shareLink.id)
+                .execute();
+            ctx.logger.info({
+                shortCode,
+                mediaItemId: shareLink.mediaItemId,
+                timesClicked: shareLink.timesClicked + 1,
+            }, 'Share link accessed');
+            // Check if request is from a social media crawler or expects HTML
+            const userAgent = req.get('user-agent') || '';
+            const acceptsHtml = req.accepts('html');
+            const isCrawler = /bot|crawler|spider|facebook|twitter|slack|telegram|whatsapp|linkedin|bluesky|atproto/i.test(userAgent);
+            // If it's a crawler or browser requesting HTML, serve HTML with Open Graph tags
+            if (acceptsHtml || isCrawler) {
+                // Helper to escape HTML
+                const escapeHtml = (str) => str
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+                let title = 'Check this out on Collective!';
+                let description = 'Check this out on Collective!';
+                let imageUrl = '';
+                // Use production URL if available, otherwise fall back to localhost for dev
+                const publicUrl = config_1.config.serviceUrl || 'http://localhost:3000';
+                const frontendUrl = req.get('origin') || 'http://127.0.0.1:5173';
+                const shareUrl = `${publicUrl}/share/${shortCode}`;
+                const itemUrl = `${frontendUrl}/share/${shortCode}`;
+                if (shareLink.reviewId) {
+                    // Fetch review and media item details for Open Graph tags
+                    const review = await ctx.db
+                        .selectFrom('reviews')
+                        .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+                        .select([
+                        'media_items.title',
+                        'media_items.creator',
+                        'media_items.coverImage',
+                        'reviews.review',
+                        'reviews.rating',
+                    ])
+                        .where('reviews.id', '=', shareLink.reviewId)
+                        .executeTakeFirst();
+                    if (review) {
+                        title = escapeHtml(review.title || 'Review on Collective');
+                        if (review.creator) {
+                            title = `${title} by ${escapeHtml(review.creator)}`;
+                        }
+                        // Use first line of review or rating as description
+                        const reviewPreview = review.review
+                            ? review.review.split('\n')[0].substring(0, 150)
+                            : `${review.rating} star rating`;
+                        description = escapeHtml(reviewPreview);
+                        imageUrl = review.coverImage || '';
+                    }
+                }
+                else if (shareLink.collectionUri) {
+                    // Fetch collection name from ATProto
+                    try {
+                        // Get the user's agent to fetch their public collection data
+                        const oauthSession = await ctx.oauthClient.restore(shareLink.userDid);
+                        if (oauthSession) {
+                            const { Agent } = await Promise.resolve().then(() => __importStar(require('@atproto/api')));
+                            const userAgent = new Agent(oauthSession);
+                            const listsResponse = await userAgent.api.com.atproto.repo.listRecords({
+                                repo: shareLink.userDid,
+                                collection: 'app.collectivesocial.feed.list',
+                            });
+                            const collection = listsResponse.data.records.find((record) => record.uri === shareLink.collectionUri);
+                            if (collection?.value?.name) {
+                                title = escapeHtml(String(collection.value.name));
+                                description = `Check out this collection on Collective!`;
+                            }
+                            else {
+                                title = 'Collection on Collective';
+                                description = 'Check out this collection on Collective!';
+                            }
+                        }
+                    }
+                    catch (err) {
+                        ctx.logger.error({ err }, 'Failed to fetch collection name for Open Graph');
+                        title = 'Collection on Collective';
+                        description = 'Check out this collection on Collective!';
+                    }
+                }
+                else if (shareLink.mediaItemId) {
+                    // Fetch media item details for Open Graph tags
+                    const mediaItem = await ctx.db
+                        .selectFrom('media_items')
+                        .select(['title', 'creator', 'coverImage'])
+                        .where('id', '=', shareLink.mediaItemId)
+                        .executeTakeFirst();
+                    if (mediaItem) {
+                        title = escapeHtml(mediaItem.title || 'Check this out on Collective!');
+                        if (mediaItem.creator) {
+                            title = `${title} by ${escapeHtml(mediaItem.creator)}`;
+                        }
+                        imageUrl = mediaItem.coverImage || '';
+                    }
+                }
+                // Serve HTML with Open Graph meta tags
+                const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${shareUrl}">
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${description}">
+  <meta property="og:site_name" content="Collective">
+  ${imageUrl
+                    ? `<meta property="og:image" content="${imageUrl}">
+  <meta property="og:image:alt" content="${title}">`
+                    : ''}
+  
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="${shareUrl}">
+  <meta name="twitter:title" content="${title}">
+  <meta name="twitter:description" content="${description}">
+  ${imageUrl
+                    ? `<meta name="twitter:image" content="${imageUrl}">
+  <meta name="twitter:image:alt" content="${title}">`
+                    : ''}
+  
+  <!-- Redirect to frontend -->
+  <meta http-equiv="refresh" content="0;url=${itemUrl}">
+  <script>
+    window.location.href = "${itemUrl}";
+  </script>
+</head>
+<body>
+  <p>Redirecting to <a href="${itemUrl}">Collective</a>...</p>
+</body>
+</html>
+        `;
+                return res.type('html').send(html);
+            }
+            // For API requests (JSON), return the share link data
+            let responseMediaItemId = shareLink.mediaItemId;
+            // If this is a review share, fetch the mediaItemId from the review
+            if (shareLink.reviewId && !responseMediaItemId) {
+                const review = await ctx.db
+                    .selectFrom('reviews')
+                    .select(['mediaItemId'])
+                    .where('id', '=', shareLink.reviewId)
+                    .executeTakeFirst();
+                responseMediaItemId = review?.mediaItemId || null;
+            }
+            res.json({
+                mediaItemId: responseMediaItemId,
+                mediaType: shareLink.mediaType,
+                collectionUri: shareLink.collectionUri,
+                reviewId: shareLink.reviewId,
+                recommendedBy: shareLink.userDid,
+                timesClicked: shareLink.timesClicked + 1,
+                createdAt: shareLink.createdAt,
+            });
+        }
+        catch (err) {
+            ctx.logger.error({ err, shortCode }, 'Failed to resolve share link');
+            res.status(500).json({ error: 'Failed to resolve share link' });
+        }
+    });
+    // GET /user/links - Get all share links for the authenticated user
+    router.get('/user/links', (0, http_1.handler)(async (req, res) => {
+        const agent = await (0, agent_1.getSessionAgent)(req, res, ctx);
+        if (!agent) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        try {
+            const userDid = agent.did;
+            const origin = req.get('origin') || 'http://127.0.0.1:5173';
+            // Fetch all share links for this user with media item details
+            const shareLinks = await ctx.db
+                .selectFrom('share_links')
+                .leftJoin('media_items', 'share_links.mediaItemId', 'media_items.id')
+                .select([
+                'share_links.id',
+                'share_links.shortCode',
+                'share_links.mediaItemId',
+                'share_links.mediaType',
+                'share_links.collectionUri',
+                'share_links.reviewId',
+                'share_links.timesClicked',
+                'share_links.createdAt',
+                'share_links.updatedAt',
+                'media_items.title',
+                'media_items.creator',
+                'media_items.coverImage',
+            ])
+                .where('share_links.userDid', '=', userDid)
+                .orderBy('share_links.createdAt', 'desc')
+                .execute();
+            // For review shares, fetch the media item title from the review
+            const reviewIds = shareLinks
+                .filter((link) => link.reviewId)
+                .map((link) => link.reviewId);
+            const reviewTitles = new Map();
+            if (reviewIds.length > 0) {
+                const reviews = await ctx.db
+                    .selectFrom('reviews')
+                    .innerJoin('media_items', 'reviews.mediaItemId', 'media_items.id')
+                    .select(['reviews.id', 'media_items.title'])
+                    .where('reviews.id', 'in', reviewIds)
+                    .execute();
+                reviews.forEach((review) => {
+                    if (review.title) {
+                        reviewTitles.set(review.id, review.title);
+                    }
+                });
+            }
+            // For links with collectionUri, fetch collection names from ATProto
+            const listsResponse = await agent.api.com.atproto.repo.listRecords({
+                repo: agent.did,
+                collection: 'app.collectivesocial.feed.list',
+            });
+            // Add full URL and collection names to each link
+            const linksWithUrls = shareLinks.map((link) => {
+                let collectionName = null;
+                if (link.collectionUri) {
+                    const collection = listsResponse.data.records.find((record) => record.uri === link.collectionUri);
+                    collectionName = collection?.value?.name || null;
+                }
+                // For review shares, prefix the title with "Review: "
+                let title = link.title;
+                if (link.reviewId && title) {
+                    title = `Review: ${title}`;
+                }
+                else if (link.reviewId) {
+                    const reviewTitle = reviewTitles.get(link.reviewId);
+                    if (reviewTitle) {
+                        title = `Review: ${reviewTitle}`;
+                    }
+                }
+                return {
+                    ...link,
+                    title,
+                    url: `${origin}/share/${link.shortCode}`,
+                    collectionName,
+                };
+            });
+            res.json({ links: linksWithUrls });
+        }
+        catch (err) {
+            ctx.logger.error({ err }, 'Failed to fetch user share links');
+            res.status(500).json({ error: 'Failed to fetch share links' });
+        }
+    }));
+    // DELETE /user/links/:id - Delete a share link
+    router.delete('/user/links/:id', (0, http_1.handler)(async (req, res) => {
+        const agent = await (0, agent_1.getSessionAgent)(req, res, ctx);
+        if (!agent) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        try {
+            const userDid = agent.did;
+            const linkId = parseInt(req.params.id);
+            if (isNaN(linkId)) {
+                return res.status(400).json({ error: 'Invalid link ID' });
+            }
+            // Verify the link belongs to this user before deleting
+            const link = await ctx.db
+                .selectFrom('share_links')
+                .select(['id', 'userDid'])
+                .where('id', '=', linkId)
+                .executeTakeFirst();
+            if (!link) {
+                return res.status(404).json({ error: 'Share link not found' });
+            }
+            if (link.userDid !== userDid) {
+                return res
+                    .status(403)
+                    .json({ error: 'Not authorized to delete this link' });
+            }
+            // Delete the share link
+            await ctx.db
+                .deleteFrom('share_links')
+                .where('id', '=', linkId)
+                .execute();
+            ctx.logger.info({ linkId, userDid }, 'Share link deleted');
+            res.json({ success: true, message: 'Share link deleted' });
+        }
+        catch (err) {
+            ctx.logger.error({ err }, 'Failed to delete share link');
+            res.status(500).json({ error: 'Failed to delete share link' });
+        }
+    }));
+    return router;
+};
+exports.createRouter = createRouter;

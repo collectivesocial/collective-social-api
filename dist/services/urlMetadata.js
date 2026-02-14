@@ -1,0 +1,131 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeUrl = normalizeUrl;
+exports.fetchUrlMetadata = fetchUrlMetadata;
+exports.detectMediaTypeFromUrl = detectMediaTypeFromUrl;
+const cheerio_1 = require("cheerio");
+/**
+ * List of query parameters that should be removed during URL normalization
+ * These are typically tracking/analytics parameters that don't affect content
+ */
+const PARAMS_TO_REMOVE = [
+    // UTM parameters (marketing/analytics)
+    'utm_source',
+    'utm_medium',
+    'utm_campaign',
+    'utm_term',
+    'utm_content',
+    'utm_id',
+    // Facebook/Meta tracking
+    'fbclid',
+    'fb_action_ids',
+    'fb_action_types',
+    'fb_ref',
+    'fb_source',
+    // Google/DoubleClick tracking
+    'gclid',
+    'dclid',
+    'gclsrc',
+    // Twitter tracking
+    'twclid',
+    // Microsoft/Bing tracking
+    'msclkid',
+    // Other common tracking params
+    'ref',
+    'referrer',
+    '_ga',
+    'mc_cid',
+    'mc_eid',
+    // Session/cache busting (usually not content-specific)
+    '_',
+    'nocache',
+];
+/**
+ * Normalize URL by removing tracking parameters and fragments
+ * Preserves all query parameters except known tracking ones
+ */
+function normalizeUrl(url) {
+    try {
+        const urlObj = new URL(url);
+        // Remove tracking parameters
+        PARAMS_TO_REMOVE.forEach((param) => {
+            urlObj.searchParams.delete(param);
+        });
+        // Remove fragment
+        urlObj.hash = '';
+        // Return the cleaned URL
+        return urlObj.toString();
+    }
+    catch (err) {
+        // If URL parsing fails, return original
+        return url;
+    }
+}
+/**
+ * Fetch Open Graph and basic metadata from a URL
+ */
+async function fetchUrlMetadata(url) {
+    try {
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; CollectiveSocial/1.0)',
+            },
+        });
+        console.log({ response });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch URL: ${response.status}`);
+        }
+        const html = await response.text();
+        const $ = (0, cheerio_1.load)(html);
+        // Try Open Graph tags first, fall back to standard meta tags
+        const title = $('meta[property="og:title"]').attr('content') ||
+            $('meta[name="twitter:title"]').attr('content') ||
+            $('title').text() ||
+            null;
+        const description = $('meta[property="og:description"]').attr('content') ||
+            $('meta[name="twitter:description"]').attr('content') ||
+            $('meta[name="description"]').attr('content') ||
+            null;
+        const image = $('meta[property="og:image"]').attr('content') ||
+            $('meta[name="twitter:image"]').attr('content') ||
+            null;
+        const author = $('meta[name="author"]').attr('content') ||
+            $('meta[property="article:author"]').attr('content') ||
+            null;
+        const siteName = $('meta[property="og:site_name"]').attr('content') || null;
+        return {
+            title: title ? title.trim() : null,
+            description: description ? description.trim() : null,
+            image: image ? image.trim() : null,
+            author: author ? author.trim() : null,
+            siteName: siteName ? siteName.trim() : null,
+        };
+    }
+    catch (err) {
+        console.log({ err });
+        console.error('Failed to fetch URL metadata:', err);
+        return {
+            title: null,
+            description: null,
+            image: null,
+            author: null,
+            siteName: null,
+        };
+    }
+}
+/**
+ * Detect media type based on URL patterns
+ */
+function detectMediaTypeFromUrl(url) {
+    const urlLower = url.toLowerCase();
+    // Video patterns
+    if (urlLower.includes('youtube.com') ||
+        urlLower.includes('youtu.be') ||
+        urlLower.includes('vimeo.com') ||
+        urlLower.includes('dailymotion.com') ||
+        urlLower.includes('twitch.tv')) {
+        return 'video';
+    }
+    // Default to article for everything else
+    return 'article';
+}
