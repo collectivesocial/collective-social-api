@@ -60,36 +60,49 @@ export const createRouter = (ctx: AppContext) => {
               updatedAt: val.updatedAt || null,
             };
 
-            // Enrich with media_items data
-            if (val.mediaItemId) {
-              const mediaItem = await ctx.db
-                .selectFrom('media_items')
-                .selectAll()
-                .where('id', '=', val.mediaItemId)
-                .executeTakeFirst();
-
-              if (mediaItem) {
-                item.mediaItem = {
-                  id: mediaItem.id,
-                  isbn: mediaItem.isbn,
-                  externalId: mediaItem.externalId,
-                  coverImage: mediaItem.coverImage,
-                  description: mediaItem.description,
-                  publishedYear: mediaItem.publishedYear,
-                  length: mediaItem.length,
-                  totalReviews: mediaItem.totalReviews,
-                  totalSaves: mediaItem.totalSaves,
-                  averageRating: mediaItem.averageRating,
-                  url: mediaItem.url,
-                };
-              }
-            }
-
             allUseritems.push(item);
           }
 
           cursor = response.data.cursor;
           if (!cursor || response.data.records.length === 0) break;
+        }
+
+        // Batch fetch all media items to avoid N+1 queries
+        const mediaItemIds = allUseritems
+          .filter((item) => item.mediaItemId)
+          .map((item) => item.mediaItemId);
+
+        const mediaItems =
+          mediaItemIds.length > 0
+            ? await ctx.db
+                .selectFrom('media_items')
+                .selectAll()
+                .where('id', 'in', mediaItemIds)
+                .execute()
+            : [];
+
+        const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
+
+        // Enrich useritems with media_items data
+        for (const item of allUseritems) {
+          if (item.mediaItemId) {
+            const mediaItem = mediaItemMap.get(item.mediaItemId);
+            if (mediaItem) {
+              item.mediaItem = {
+                id: mediaItem.id,
+                isbn: mediaItem.isbn,
+                externalId: mediaItem.externalId,
+                coverImage: mediaItem.coverImage,
+                description: mediaItem.description,
+                publishedYear: mediaItem.publishedYear,
+                length: mediaItem.length,
+                totalReviews: mediaItem.totalReviews,
+                totalSaves: mediaItem.totalSaves,
+                averageRating: mediaItem.averageRating,
+                url: mediaItem.url,
+              };
+            }
+          }
         }
 
         res.json({ useritems: allUseritems });
