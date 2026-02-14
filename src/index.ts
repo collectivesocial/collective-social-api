@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createRouter as createUserRouter } from './routes/user';
 import { createRouter as createAuthRouter } from './routes/auth';
 import { createRouter as createCollectionsRouter } from './routes/collections';
@@ -20,88 +21,85 @@ import { createRouter as createCompletionsRouter } from './routes/completions';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
+import { createErrorHandler } from './middleware/errorHandler';
+import { createRequestLogger } from './middleware/requestLogger';
 
 const app = express();
 
-// Enable CORS for your React app
+// Security headers
+app.use(helmet());
+
+// CORS — use CLIENT_URL in production, localhost in dev
 app.use(
   cors({
-    origin: 'http://127.0.0.1:5173', // Vite default port
+    origin: config.clientUrl || 'http://127.0.0.1:5173',
     credentials: true,
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Health check — available before context initialization
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
 
 // Initialize app context and routes
 createAppContext().then((ctx) => {
-  // Add user activity tracking middleware
+  // Request logging with correlation IDs
+  app.use(createRequestLogger(ctx));
+
+  // User activity tracking
   app.use(createUserActivityTracker(ctx));
 
-  // Mount auth routes
+  // Mount routes
   app.use(createAuthRouter(ctx));
-
-  // Mount user routes
   app.use('/users', createUserRouter(ctx));
-
-  // Mount collections routes
   app.use('/collections', createCollectionsRouter(ctx));
-
-  // Mount media routes
   app.use('/media', createMediaRouter(ctx));
-
-  // Mount admin routes
   app.use('/admin', createAdminRouter(ctx));
-
-  // Mount feedback routes
   app.use('/feedback', createFeedbackRouter(ctx));
-
-  // Mount feed routes
   app.use('/feed', createFeedRouter(ctx));
-
-  // Mount share routes
   app.use('/share', createShareRouter(ctx));
-
-  // Mount review segments routes
   app.use('/reviewsegments', createReviewSegmentsRouter(ctx));
-
-  // Mount tags routes
   createTagsRouter(ctx, app);
-
-  // Mount comments routes
   app.use('/comments', createCommentsRouter(ctx));
-
-  // Mount reactions routes
   app.use('/reactions', createReactionsRouter(ctx));
-
-  // Mount groups routes (powered by OpenSocial)
   app.use('/groups', createGroupsRouter(ctx));
-
-  // Mount group content routes (book club lists, segments, posts, reactions)
   app.use('/groups/:communityDid', createGroupContentRouter(ctx));
-
-  // Mount notification routes
   app.use('/notifications', createNotificationsRouter(ctx));
-
-  // Mount useritems routes
   app.use('/useritems', createUseritemsRouter(ctx));
-
-  // Mount completions routes
   app.use('/completions', createCompletionsRouter(ctx));
 
-  // Root route - redirect to React app
-  app.get('/', (req, res) => {
-    const reactAppUrl =
-      config.nodeEnv === 'production'
-        ? config.serviceUrl || 'http://127.0.0.1:5173'
-        : 'http://127.0.0.1:5173';
-    res.redirect(reactAppUrl);
+  // Root route
+  app.get('/', (_req, res) => {
+    res.redirect(config.clientUrl || 'http://127.0.0.1:5173');
   });
 
-  const PORT = config.port;
+  // Global error handler (must be last middleware)
+  app.use(createErrorHandler(ctx));
 
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  const server = app.listen(config.port, () => {
+    ctx.logger.info({ port: config.port }, `Server running on port ${config.port}`);
   });
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    ctx.logger.info({ signal }, 'Shutdown signal received');
+    server.close(async () => {
+      ctx.logger.info('HTTP server closed');
+      await ctx.destroy();
+      ctx.logger.info('Database connections closed');
+      process.exit(0);
+    });
+    // Force exit after 10s
+    setTimeout(() => {
+      ctx.logger.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, 10_000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 });

@@ -1,12 +1,13 @@
 import express from 'express';
 import { AppContext } from '../context';
 import { getIronSession } from 'iron-session';
-import { config } from '../config';
 import { Agent } from '@atproto/api';
+import { SESSION_OPTIONS, Session } from './session';
 
-export type Session = { did?: string };
-
-// Helper function to get the Atproto Agent for the active session
+/**
+ * Get the authenticated ATProto agent for the current session.
+ * Returns null if the user is not logged in or session is invalid.
+ */
 export async function getSessionAgent(
   req: express.Request,
   res: express.Response,
@@ -14,16 +15,7 @@ export async function getSessionAgent(
 ) {
   res.setHeader('Vary', 'Cookie');
 
-  const session = await getIronSession<Session>(req, res, {
-    cookieName: 'sid',
-    password: config.cookieSecret,
-    cookieOptions: {
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      httpOnly: true,
-      path: '/',
-    },
-  });
+  const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
   if (!session.did) return null;
 
   res.setHeader('cache-control', 'private, no-store');
@@ -32,6 +24,7 @@ export async function getSessionAgent(
     const oauthSession = await ctx.oauthClient.restore(session.did);
     return oauthSession ? new Agent(oauthSession) : null;
   } catch (err) {
+    ctx.logger.warn({ err }, 'oauth session restore failed');
     await session.destroy();
     return null;
   }

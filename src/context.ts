@@ -3,8 +3,8 @@ import { Firehose } from '@atproto/sync';
 import { pino } from 'pino';
 
 import { createOAuthClient } from './auth/client';
-import { createDb, Database, migrateToLatest } from './db';
-// import { createIngester } from './ingester';
+import { createDb, Database } from './db';
+import { migrateToLatest } from './migrations';
 import { config } from './config';
 import {
   BidirectionalResolver,

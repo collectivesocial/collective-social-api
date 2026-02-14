@@ -38,7 +38,7 @@ export async function createOAuthClient(db: Database) {
 
   const clientMetadata: OAuthClientMetadataInput = config.serviceUrl
     ? {
-        client_name: 'Statusphere Example App',
+        client_name: 'Collective Social',
         client_id: `${config.serviceUrl}/oauth-client-metadata.json`,
         jwks_uri: `${config.serviceUrl}/.well-known/jwks.json`,
         redirect_uris: [`${config.serviceUrl}/oauth/callback`],

@@ -4,9 +4,12 @@
   "description": "API for the Collective social application",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "start": "node dist/index.js",
     "dev": "nodemon --exec ts-node src/index.ts",
+    "build": "tsc",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "format": "prettier --write \"src/**/*.{ts,js,json}\"",
@@ -27,13 +30,14 @@
     "dotenv": "^17.2.3",
     "envalid": "^8.1.1",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
     "http-terminator": "^3.2.0",
     "iron-session": "^8.0.4",
     "kysely": "^0.28.8",
     "nanoid": "^5.1.6",
-    "nodemon": "^3.1.11",
     "pg": "^8.16.3",
-    "save-dev": "^0.0.1-security"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@atproto/lex-cli": "^0.9.7",
@@ -42,8 +46,11 @@
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.1",
     "@types/pg": "^8.15.6",
+    "@types/supertest": "^6.0.3",
     "prettier": "^3.7.1",
+    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }

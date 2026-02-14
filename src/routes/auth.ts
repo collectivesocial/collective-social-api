@@ -3,40 +3,27 @@ import { OAuthResolverError } from '@atproto/oauth-client-node';
 import express, { Request, Response } from 'express';
 import { getIronSession } from 'iron-session';
 import type {
-  IncomingMessage,
   RequestListener,
-  ServerResponse,
 } from 'node:http';
-import path from 'node:path';
 
 import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
 import { ifString } from '../lib/stringUtil';
+import { SESSION_OPTIONS, Session } from '../auth/session';
 
 // Max age, in seconds, for static routes and assets
 const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
 
-type Session = { did?: string };
-
 // Helper function to get the Atproto Agent for the active session
 async function getSessionAgent(
-  req: IncomingMessage,
-  res: ServerResponse,
+  req: Request,
+  res: Response,
   ctx: AppContext
 ) {
   res.setHeader('Vary', 'Cookie');
 
-  const session = await getIronSession<Session>(req, res, {
-    cookieName: 'sid',
-    password: config.cookieSecret,
-    cookieOptions: {
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      httpOnly: true,
-      path: '/',
-    },
-  });
+  const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
   if (!session.did) return null;
 
   // This page is dynamic and should not be cached publicly
