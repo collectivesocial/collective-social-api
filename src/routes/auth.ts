@@ -4,9 +4,7 @@ import { Agent } from '@atproto/api';
 import { OAuthResolverError } from '@atproto/oauth-client-node';
 import express, { Request, Response } from 'express';
 import { getIronSession } from 'iron-session';
-import type {
-  RequestListener,
-} from 'node:http';
+import type { RequestListener } from 'node:http';
 
 import type { AppContext } from '../context';
 import { config } from '../config';
@@ -18,11 +16,7 @@ import { SESSION_OPTIONS, Session } from '../auth/session';
 const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
 
 // Helper function to get the Atproto Agent for the active session
-async function getSessionAgent(
-  req: Request,
-  res: Response,
-  ctx: AppContext
-) {
+async function getSessionAgent(req: Request, res: Response, ctx: AppContext) {
   res.setHeader('Vary', 'Cookie');
 
   const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);

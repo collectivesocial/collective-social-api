@@ -13,10 +13,7 @@
 import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
-import {
-  requireGroupMember,
-  GroupAuthRequest,
-} from '../middleware/groupAuth';
+import { requireGroupMember, GroupAuthRequest } from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri } from '../services/opensocial';
 import type { PdsRecord } from '../services/opensocial';
@@ -61,11 +58,15 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
 
-      const records = await opensocial.listAllCommunityRecords(communityDid, COL_LIST);
+      const records = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LIST
+      );
       const lists = records
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
-        .sort((a: any, b: any) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
 
       return res.json({ lists });
@@ -85,20 +86,30 @@ export const createRouter = (ctx: AppContext) => {
 
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
       // Fetch all items and filter by this list's URI
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
       const items = allItems
         .filter((r: any) => r.value.listUri === list.uri)
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
         .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
       // Fetch status records to enrich items
-      const allStatuses = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM_STATUS);
+      const allStatuses = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM_STATUS
+      );
       const statusByItemUri = new Map<string, any>();
       for (const s of allStatuses) {
         statusByItemUri.set(s.value.listItemUri as string, s.value);
@@ -144,7 +155,14 @@ export const createRouter = (ctx: AppContext) => {
         communityDid,
         userDid,
         COL_LIST,
-        { name, description, purpose, segmentType, createdBy: userDid, createdAt: now }
+        {
+          name,
+          description,
+          purpose,
+          segmentType,
+          createdBy: userDid,
+          createdAt: now,
+        }
       );
 
       // Notify members
@@ -186,7 +204,11 @@ export const createRouter = (ctx: AppContext) => {
       // Fetch existing to merge
       let existing: PdsRecord;
       try {
-        existing = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        existing = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
@@ -194,13 +216,19 @@ export const createRouter = (ctx: AppContext) => {
       const updatedRecord = {
         ...existing.value,
         name: name ?? existing.value.name,
-        description: description !== undefined ? description : existing.value.description,
+        description:
+          description !== undefined ? description : existing.value.description,
         purpose: purpose !== undefined ? purpose : existing.value.purpose,
-        segmentType: segmentType !== undefined ? segmentType : existing.value.segmentType,
+        segmentType:
+          segmentType !== undefined ? segmentType : existing.value.segmentType,
       };
 
       const result = await opensocial.updateCommunityRecord(
-        communityDid, userDid, COL_LIST, rkey, updatedRecord
+        communityDid,
+        userDid,
+        COL_LIST,
+        rkey,
+        updatedRecord
       );
 
       return res.json({
@@ -223,21 +251,40 @@ export const createRouter = (ctx: AppContext) => {
       // Get the list URI to find children
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
       // Delete all child items (and their children: segments, posts, reactions)
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
-      const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
+      const listItems = allItems.filter(
+        (r: any) => r.value.listUri === list.uri
+      );
 
       for (const item of listItems) {
-        await deleteItemAndChildren(communityDid, userDid, item.uri, rkeyFromUri(item.uri));
+        await deleteItemAndChildren(
+          communityDid,
+          userDid,
+          item.uri,
+          rkeyFromUri(item.uri)
+        );
       }
 
       // Delete the list itself
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_LIST, rkey);
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_LIST,
+        rkey
+      );
 
       return res.json({ success: true });
     })
@@ -261,12 +308,19 @@ export const createRouter = (ctx: AppContext) => {
       // Get the list URI
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          listRkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
       const items = allItems
         .filter((r: any) => r.value.listUri === list.uri)
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
@@ -291,13 +345,19 @@ export const createRouter = (ctx: AppContext) => {
       const { title, creator, mediaItemId, mediaType, order } = req.body;
 
       if (!title || !mediaType) {
-        return res.status(400).json({ error: 'title and mediaType are required' });
+        return res
+          .status(400)
+          .json({ error: 'title and mediaType are required' });
       }
 
       // Get the list URI + name
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          listRkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
@@ -305,10 +365,16 @@ export const createRouter = (ctx: AppContext) => {
       // Determine order from existing items
       let itemOrder = order;
       if (itemOrder == null) {
-        const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
-        const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
+        const allItems = await opensocial.listAllCommunityRecords(
+          communityDid,
+          COL_LISTITEM
+        );
+        const listItems = allItems.filter(
+          (r: any) => r.value.listUri === list.uri
+        );
         const maxOrder = listItems.reduce(
-          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+          (max, r: any) => Math.max(max, r.value.order ?? 0),
+          -1
         );
         itemOrder = maxOrder + 1;
       }
@@ -378,7 +444,11 @@ export const createRouter = (ctx: AppContext) => {
       // Get the item
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
@@ -387,7 +457,8 @@ export const createRouter = (ctx: AppContext) => {
 
       // Find existing status record for this item
       const allStatuses = await opensocial.listAllCommunityRecords(
-        communityDid, COL_LISTITEM_STATUS
+        communityDid,
+        COL_LISTITEM_STATUS
       );
       const existingStatus = allStatuses.find(
         (r: any) => r.value.listItemUri === item.uri
@@ -397,13 +468,18 @@ export const createRouter = (ctx: AppContext) => {
       if (existingStatus) {
         const statusRkey = rkeyFromUri(existingStatus.uri);
         const result = await opensocial.updateCommunityRecord(
-          communityDid, userDid, COL_LISTITEM_STATUS, statusRkey,
+          communityDid,
+          userDid,
+          COL_LISTITEM_STATUS,
+          statusRkey,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
       } else {
         const result = await opensocial.createCommunityRecord(
-          communityDid, userDid, COL_LISTITEM_STATUS,
+          communityDid,
+          userDid,
+          COL_LISTITEM_STATUS,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
@@ -434,7 +510,11 @@ export const createRouter = (ctx: AppContext) => {
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
@@ -463,13 +543,18 @@ export const createRouter = (ctx: AppContext) => {
       // Get the item URI
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       const allSegments = await opensocial.listAllCommunityRecords(
-        communityDid, COL_SEGMENT
+        communityDid,
+        COL_SEGMENT
       );
       const segments = allSegments
         .filter((r: any) => r.value.listItemUri === item.uri)
@@ -495,13 +580,20 @@ export const createRouter = (ctx: AppContext) => {
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       // Get all segments for this item
-      const allSegments = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT);
+      const allSegments = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_SEGMENT
+      );
       const itemSegments = allSegments.filter(
         (r: any) => r.value.listItemUri === item.uri
       );
@@ -510,13 +602,19 @@ export const createRouter = (ctx: AppContext) => {
       // Get ALL progress records once (not per-segment)
       let allProgress: PdsRecord[] = [];
       try {
-        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+        allProgress = await opensocial.listAllCommunityRecords(
+          communityDid,
+          COL_SEGMENT_PROGRESS
+        );
       } catch (err) {
         console.error('Failed to list segment progress:', err);
       }
 
       // Group progress by segment URI
-      const progressBySegment: Record<string, Array<{ uri: string; rkey: string; [k: string]: unknown }>> = {};
+      const progressBySegment: Record<
+        string,
+        Array<{ uri: string; rkey: string; [k: string]: unknown }>
+      > = {};
       for (const p of allProgress) {
         const segUri = (p.value as any).segmentUri as string;
         if (segmentUris.has(segUri)) {
@@ -553,16 +651,26 @@ export const createRouter = (ctx: AppContext) => {
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       let {
-        label, segmentType,
-        startPage, endPage, startPercent, endPercent,
-        startChapter, endChapter,
-        assignedDate, order,
+        label,
+        segmentType,
+        startPage,
+        endPage,
+        startPercent,
+        endPercent,
+        startChapter,
+        endChapter,
+        assignedDate,
+        order,
       } = req.body;
 
       if (!label) {
@@ -579,14 +687,18 @@ export const createRouter = (ctx: AppContext) => {
           .executeTakeFirst();
 
         if (mediaItem?.chapterMap) {
-          const map = typeof mediaItem.chapterMap === 'string'
-            ? JSON.parse(mediaItem.chapterMap)
-            : mediaItem.chapterMap;
+          const map =
+            typeof mediaItem.chapterMap === 'string'
+              ? JSON.parse(mediaItem.chapterMap)
+              : mediaItem.chapterMap;
 
-          const startCh = map.chapters?.find((c: any) => c.chapter === startChapter);
-          const endCh = endChapter != null
-            ? map.chapters?.find((c: any) => c.chapter === endChapter)
-            : startCh;
+          const startCh = map.chapters?.find(
+            (c: any) => c.chapter === startChapter
+          );
+          const endCh =
+            endChapter != null
+              ? map.chapters?.find((c: any) => c.chapter === endChapter)
+              : startCh;
 
           if (startCh) {
             startPage = startCh.startPage;
@@ -603,13 +715,15 @@ export const createRouter = (ctx: AppContext) => {
       // Determine order
       if (order == null) {
         const allSegments = await opensocial.listAllCommunityRecords(
-          communityDid, COL_SEGMENT
+          communityDid,
+          COL_SEGMENT
         );
         const itemSegments = allSegments.filter(
           (r: any) => r.value.listItemUri === item.uri
         );
         const maxOrder = itemSegments.reduce(
-          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+          (max, r: any) => Math.max(max, r.value.order ?? 0),
+          -1
         );
         order = maxOrder + 1;
       }
@@ -624,9 +738,12 @@ export const createRouter = (ctx: AppContext) => {
           listItemUri: item.uri,
           label,
           segmentType,
-          startPage, endPage,
-          startPercent, endPercent,
-          startChapter, endChapter,
+          startPage,
+          endPage,
+          startPercent,
+          endPercent,
+          startChapter,
+          endChapter,
           assignedDate,
           order,
           createdBy: userDid,
@@ -647,9 +764,12 @@ export const createRouter = (ctx: AppContext) => {
           listItemUri: item.uri,
           label,
           segmentType,
-          startPage, endPage,
-          startPercent, endPercent,
-          startChapter, endChapter,
+          startPage,
+          endPage,
+          startPercent,
+          endPercent,
+          startChapter,
+          endChapter,
           assignedDate,
           order,
           createdBy: userDid,
@@ -672,16 +792,26 @@ export const createRouter = (ctx: AppContext) => {
 
       let existing: PdsRecord;
       try {
-        existing = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+        existing = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
       const {
-        label, segmentType,
-        startPage, endPage, startPercent, endPercent,
-        startChapter, endChapter,
-        assignedDate, order,
+        label,
+        segmentType,
+        startPage,
+        endPage,
+        startPercent,
+        endPercent,
+        startChapter,
+        endChapter,
+        assignedDate,
+        order,
       } = req.body;
 
       const val = existing.value as any;
@@ -691,16 +821,23 @@ export const createRouter = (ctx: AppContext) => {
         segmentType: segmentType !== undefined ? segmentType : val.segmentType,
         startPage: startPage !== undefined ? startPage : val.startPage,
         endPage: endPage !== undefined ? endPage : val.endPage,
-        startPercent: startPercent !== undefined ? startPercent : val.startPercent,
+        startPercent:
+          startPercent !== undefined ? startPercent : val.startPercent,
         endPercent: endPercent !== undefined ? endPercent : val.endPercent,
-        startChapter: startChapter !== undefined ? startChapter : val.startChapter,
+        startChapter:
+          startChapter !== undefined ? startChapter : val.startChapter,
         endChapter: endChapter !== undefined ? endChapter : val.endChapter,
-        assignedDate: assignedDate !== undefined ? assignedDate : val.assignedDate,
+        assignedDate:
+          assignedDate !== undefined ? assignedDate : val.assignedDate,
         order: order ?? val.order,
       };
 
       const result = await opensocial.updateCommunityRecord(
-        communityDid, userDid, COL_SEGMENT, rkey, updatedRecord
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkey,
+        updatedRecord
       );
 
       return res.json({
@@ -723,24 +860,37 @@ export const createRouter = (ctx: AppContext) => {
       // Delete any posts associated with this segment
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
       // Delete progress records for this segment
-      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      const allProgress = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_SEGMENT_PROGRESS
+      );
       const segProgress = allProgress.filter(
         (r: any) => r.value.segmentUri === segment.uri
       );
       for (const prog of segProgress) {
         await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
+          communityDid,
+          userDid,
+          COL_SEGMENT_PROGRESS,
+          rkeyFromUri(prog.uri)
         );
       }
 
       // Delete child posts + reactions
-      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
+      const allPosts = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_POST
+      );
       const segmentPosts = allPosts.filter(
         (r: any) => r.value.segmentUri === segment.uri
       );
@@ -748,7 +898,12 @@ export const createRouter = (ctx: AppContext) => {
         await deletePostAndReactions(communityDid, userDid, post.uri);
       }
 
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT, rkey);
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkey
+      );
 
       return res.json({ success: true });
     })
@@ -771,12 +926,19 @@ export const createRouter = (ctx: AppContext) => {
 
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+      const allProgress = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_SEGMENT_PROGRESS
+      );
       const segmentProgress = allProgress
         .filter((r: any) => r.value.segmentUri === segment.uri)
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
@@ -801,7 +963,11 @@ export const createRouter = (ctx: AppContext) => {
 
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
@@ -809,18 +975,26 @@ export const createRouter = (ctx: AppContext) => {
       // Check for duplicate — member may have already marked this segment
       let allProgress: PdsRecord[];
       try {
-        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
+        allProgress = await opensocial.listAllCommunityRecords(
+          communityDid,
+          COL_SEGMENT_PROGRESS
+        );
       } catch (err) {
         console.error('Failed to list segment progress records:', err);
         allProgress = [];
       }
 
       const existing = allProgress.find(
-        (r: any) => r.value.segmentUri === segment.uri && r.value.memberDid === userDid
+        (r: any) =>
+          r.value.segmentUri === segment.uri && r.value.memberDid === userDid
       );
       if (existing) {
         return res.json({
-          progress: { uri: existing.uri, rkey: rkeyFromUri(existing.uri), ...existing.value },
+          progress: {
+            uri: existing.uri,
+            rkey: rkeyFromUri(existing.uri),
+            ...existing.value,
+          },
           alreadyExists: true,
         });
       }
@@ -856,7 +1030,9 @@ export const createRouter = (ctx: AppContext) => {
           // Forward to the personal reviewsegment endpoint
           // This is an internal call — the user's session cookie is on the request
           const itemRecord = await opensocial.getCommunityRecord(
-            communityDid, COL_LISTITEM, rkeyFromUri(segVal.listItemUri)
+            communityDid,
+            COL_LISTITEM,
+            rkeyFromUri(segVal.listItemUri)
           );
           const itemVal = itemRecord.value as any;
 
@@ -935,7 +1111,12 @@ export const createRouter = (ctx: AppContext) => {
       const { userDid, communityDid } = req.groupAuth!;
       const { rkey } = req.params;
 
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT_PROGRESS, rkey);
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_SEGMENT_PROGRESS,
+        rkey
+      );
 
       return res.json({ success: true });
     })
@@ -1218,14 +1399,17 @@ export const createRouter = (ctx: AppContext) => {
       let post: PdsRecord;
       try {
         post = await opensocial.getCommunityRecord(
-          communityDid, COL_POST, postRkey
+          communityDid,
+          COL_POST,
+          postRkey
         );
       } catch {
         return res.status(404).json({ error: 'Post not found' });
       }
 
       const allReactions = await opensocial.listAllCommunityRecords(
-        communityDid, COL_REACTION
+        communityDid,
+        COL_REACTION
       );
       const postReactions = allReactions.filter(
         (r: any) => r.value.postUri === post.uri
@@ -1270,7 +1454,9 @@ export const createRouter = (ctx: AppContext) => {
       let post: PdsRecord;
       try {
         post = await opensocial.getCommunityRecord(
-          communityDid, COL_POST, postRkey
+          communityDid,
+          COL_POST,
+          postRkey
         );
       } catch {
         return res.status(404).json({ error: 'Post not found' });
@@ -1278,7 +1464,8 @@ export const createRouter = (ctx: AppContext) => {
 
       // Check for existing reaction (toggle off)
       const allReactions = await opensocial.listAllCommunityRecords(
-        communityDid, COL_REACTION
+        communityDid,
+        COL_REACTION
       );
       const existing = allReactions.find(
         (r: any) =>
@@ -1289,7 +1476,10 @@ export const createRouter = (ctx: AppContext) => {
 
       if (existing) {
         await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_REACTION, rkeyFromUri(existing.uri)
+          communityDid,
+          userDid,
+          COL_REACTION,
+          rkeyFromUri(existing.uri)
         );
         return res.json({ action: 'removed', emoji });
       }
@@ -1297,7 +1487,9 @@ export const createRouter = (ctx: AppContext) => {
       // Create new reaction
       const now = new Date().toISOString();
       const pdsRecord = await opensocial.createCommunityRecord(
-        communityDid, userDid, COL_REACTION,
+        communityDid,
+        userDid,
+        COL_REACTION,
         { postUri: post.uri, emoji, authorDid: userDid, createdAt: now }
       );
 
@@ -1501,7 +1693,8 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete child replies recursively
     const allPosts = await opensocial.listAllCommunityRecords(
-      communityDid, COL_POST
+      communityDid,
+      COL_POST
     );
     const childPosts = allPosts.filter(
       (r: any) => r.value.parentPostUri === postUri
@@ -1512,20 +1705,27 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete reactions on this post
     const allReactions = await opensocial.listAllCommunityRecords(
-      communityDid, COL_REACTION
+      communityDid,
+      COL_REACTION
     );
     const postReactions = allReactions.filter(
       (r: any) => r.value.postUri === postUri
     );
     for (const reaction of postReactions) {
       await opensocial.deleteCommunityRecord(
-        communityDid, userDid, COL_REACTION, rkeyFromUri(reaction.uri)
+        communityDid,
+        userDid,
+        COL_REACTION,
+        rkeyFromUri(reaction.uri)
       );
     }
 
     // Delete the post
     await opensocial.deleteCommunityRecord(
-      communityDid, userDid, COL_POST, postRkey
+      communityDid,
+      userDid,
+      COL_POST,
+      postRkey
     );
   }
 
@@ -1538,7 +1738,8 @@ export const createRouter = (ctx: AppContext) => {
   ) {
     // Delete segments and their posts
     const allSegments = await opensocial.listAllCommunityRecords(
-      communityDid, COL_SEGMENT
+      communityDid,
+      COL_SEGMENT
     );
     const itemSegments = allSegments.filter(
       (r: any) => r.value.listItemUri === itemUri
@@ -1546,20 +1747,25 @@ export const createRouter = (ctx: AppContext) => {
     for (const seg of itemSegments) {
       // Delete progress records for this segment
       const allProgress = await opensocial.listAllCommunityRecords(
-        communityDid, COL_SEGMENT_PROGRESS
+        communityDid,
+        COL_SEGMENT_PROGRESS
       );
       const segProgress = allProgress.filter(
         (r: any) => r.value.segmentUri === seg.uri
       );
       for (const prog of segProgress) {
         await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
+          communityDid,
+          userDid,
+          COL_SEGMENT_PROGRESS,
+          rkeyFromUri(prog.uri)
         );
       }
 
       // Delete posts for this segment
       const allPosts = await opensocial.listAllCommunityRecords(
-        communityDid, COL_POST
+        communityDid,
+        COL_POST
       );
       const segPosts = allPosts.filter(
         (r: any) => r.value.segmentUri === seg.uri
@@ -1568,17 +1774,20 @@ export const createRouter = (ctx: AppContext) => {
         await deletePostAndReactions(communityDid, userDid, post.uri);
       }
       await opensocial.deleteCommunityRecord(
-        communityDid, userDid, COL_SEGMENT, rkeyFromUri(seg.uri)
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkeyFromUri(seg.uri)
       );
     }
 
     // Delete posts directly on the item (not tied to a segment)
     const allPosts = await opensocial.listAllCommunityRecords(
-      communityDid, COL_POST
+      communityDid,
+      COL_POST
     );
     const itemPosts = allPosts.filter(
-      (r: any) =>
-        r.value.listItemUri === itemUri && !r.value.segmentUri
+      (r: any) => r.value.listItemUri === itemUri && !r.value.segmentUri
     );
     for (const post of itemPosts) {
       await deletePostAndReactions(communityDid, userDid, post.uri);
@@ -1586,7 +1795,8 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete status record for this item
     const allStatuses = await opensocial.listAllCommunityRecords(
-      communityDid, COL_LISTITEM_STATUS
+      communityDid,
+      COL_LISTITEM_STATUS
     );
     const itemStatus = allStatuses.find(
       (r: any) => r.value.listItemUri === itemUri
@@ -1602,7 +1812,10 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete the item itself
     await opensocial.deleteCommunityRecord(
-      communityDid, userDid, COL_LISTITEM, itemRkey
+      communityDid,
+      userDid,
+      COL_LISTITEM,
+      itemRkey
     );
   }
 

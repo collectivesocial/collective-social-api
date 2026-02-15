@@ -4,7 +4,13 @@ dotenv.config();
 
 function requireSecureSecret(name: string): string {
   const value = process.env[name];
-  const insecureDefaults = ['', 'default', 'super-secret', 'secret', 'changeme'];
+  const insecureDefaults = [
+    '',
+    'default',
+    'super-secret',
+    'secret',
+    'changeme',
+  ];
   if (!value || insecureDefaults.includes(value.toLowerCase())) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error(
@@ -28,12 +34,16 @@ export const config = {
   databaseUrl:
     process.env.DATABASE_URL ||
     (nodeEnv === 'production'
-      ? (() => { throw new Error('DATABASE_URL must be set in production'); })()
+      ? (() => {
+          throw new Error('DATABASE_URL must be set in production');
+        })()
       : 'postgresql://postgres:postgres@localhost:5432/collective_social_db'),
   serviceUrl: process.env.SERVICE_URL || undefined, // undefined for local dev (loopback mode)
   clientUrl:
     process.env.CLIENT_URL ||
-    (nodeEnv === 'production' ? process.env.SERVICE_URL : 'http://127.0.0.1:5173'),
+    (nodeEnv === 'production'
+      ? process.env.SERVICE_URL
+      : 'http://127.0.0.1:5173'),
   plcUrl: process.env.PLC_URL || 'https://plc.directory',
   privateKeys: process.env.PRIVATE_KEYS
     ? JSON.parse(process.env.PRIVATE_KEYS)
@@ -49,4 +59,5 @@ export const config = {
     'CollectiveSocial.app/1.0 (contact@collectivesocial.app)',
   openSocialApiUrl: process.env.OPENSOCIAL_API_URL || 'http://127.0.0.1:3001',
   openSocialApiKey: process.env.OPENSOCIAL_API_KEY || '',
+  corsOrigin: process.env.CORS_ORIGIN, // e.g. https://app.collectivesocial.app
 } as const;

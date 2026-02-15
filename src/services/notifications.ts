@@ -1,14 +1,14 @@
 import type { Database } from '../db';
 
 export type NotificationType =
-  | 'new_segment'    // Admin created a new reading assignment
-  | 'new_post'       // Someone posted in a discussion
-  | 'reply'          // Someone replied to your post
-  | 'reaction'       // Someone reacted to your post
-  | 'mention'        // Someone mentioned you in a post
-  | 'status_change'  // Admin changed an item's status (e.g. "in-progress")
-  | 'new_item'       // Someone added an item to a list
-  | 'new_list';      // Someone created a new list
+  | 'new_segment' // Admin created a new reading assignment
+  | 'new_post' // Someone posted in a discussion
+  | 'reply' // Someone replied to your post
+  | 'reaction' // Someone reacted to your post
+  | 'mention' // Someone mentioned you in a post
+  | 'status_change' // Admin changed an item's status (e.g. "in-progress")
+  | 'new_item' // Someone added an item to a list
+  | 'new_list'; // Someone created a new list
 
 interface CreateNotificationOpts {
   communityDid: string;
@@ -77,10 +77,7 @@ export async function notifyAllMembers(
 
   if (notifications.length === 0) return;
 
-  await db
-    .insertInto('group_notifications')
-    .values(notifications)
-    .execute();
+  await db.insertInto('group_notifications').values(notifications).execute();
 }
 
 /**
@@ -110,8 +107,5 @@ export async function notifyUsers(
 
   if (notifications.length === 0) return;
 
-  await db
-    .insertInto('group_notifications')
-    .values(notifications)
-    .execute();
+  await db.insertInto('group_notifications').values(notifications).execute();
 }

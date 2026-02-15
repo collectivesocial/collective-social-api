@@ -60,10 +60,16 @@ class OpenSocialClientError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!OPENSOCIAL_API_URL) {
-    throw new OpenSocialClientError('OPENSOCIAL_API_URL is not configured', 500);
+    throw new OpenSocialClientError(
+      'OPENSOCIAL_API_URL is not configured',
+      500
+    );
   }
   if (!OPENSOCIAL_API_KEY) {
-    throw new OpenSocialClientError('OPENSOCIAL_API_KEY is not configured', 500);
+    throw new OpenSocialClientError(
+      'OPENSOCIAL_API_KEY is not configured',
+      500
+    );
   }
 
   const url = `${OPENSOCIAL_API_URL}${path}`;
@@ -77,7 +83,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: response.statusText }));
+    const body = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
     throw new OpenSocialClientError(
       (body as any).error || `OpenSocial API error: ${response.status}`,
       response.status
@@ -128,7 +136,10 @@ export async function listAllCommunityRecords<T = Record<string, unknown>>(
  * List all communities visible to this app.
  * Optionally pass a user DID to include is_admin flags.
  */
-export async function listCommunities(userDid?: string, query?: string): Promise<Community[]> {
+export async function listCommunities(
+  userDid?: string,
+  query?: string
+): Promise<Community[]> {
   const params = new URLSearchParams();
   if (userDid) params.set('userDid', userDid);
   if (query) params.set('query', query);
@@ -168,7 +179,10 @@ export async function createCommunity(opts: {
 /**
  * Delete a community (caller must be the sole admin).
  */
-export async function deleteCommunity(did: string, userDid: string): Promise<void> {
+export async function deleteCommunity(
+  did: string,
+  userDid: string
+): Promise<void> {
   await request(`/api/v1/communities/${encodeURIComponent(did)}`, {
     method: 'DELETE',
     body: JSON.stringify({ user_did: userDid }),
@@ -184,10 +198,13 @@ export async function joinCommunity(
   userDid: string,
   userPdsHost: string
 ): Promise<JoinInfo> {
-  return request(`/api/v1/communities/${encodeURIComponent(communityDid)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ user_did: userDid, user_pds_host: userPdsHost }),
-  });
+  return request(
+    `/api/v1/communities/${encodeURIComponent(communityDid)}/members`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_did: userDid, user_pds_host: userPdsHost }),
+    }
+  );
 }
 
 /**
@@ -251,7 +268,12 @@ export async function createCommunityRecord(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
     {
       method: 'POST',
-      body: JSON.stringify({ userDid, collection, record: { $type: collection, ...record }, rkey }),
+      body: JSON.stringify({
+        userDid,
+        collection,
+        record: { $type: collection, ...record },
+        rkey,
+      }),
     }
   );
 }
@@ -271,7 +293,12 @@ export async function updateCommunityRecord(
     `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
     {
       method: 'PUT',
-      body: JSON.stringify({ userDid, collection, rkey, record: { $type: collection, ...record } }),
+      body: JSON.stringify({
+        userDid,
+        collection,
+        rkey,
+        record: { $type: collection, ...record },
+      }),
     }
   );
 }
@@ -376,7 +403,10 @@ interface PermissionsResponse {
 }
 
 // In-memory permissions cache: keyed on "communityDid:userDid", TTL 60 s
-const permissionsCache = new Map<string, { data: PermissionsResponse; fetchedAt: number }>();
+const permissionsCache = new Map<
+  string,
+  { data: PermissionsResponse; fetchedAt: number }
+>();
 const PERMISSIONS_CACHE_TTL = 60_000; // 60 seconds
 
 /**
@@ -421,7 +451,10 @@ export async function resolveUserPermissions(
   communityDid: string,
   userDid?: string
 ): Promise<Record<string, ResolvedCollectionPermission>> {
-  const { permissions, userRoles } = await getCommunityPermissions(communityDid, userDid);
+  const { permissions, userRoles } = await getCommunityPermissions(
+    communityDid,
+    userDid
+  );
 
   const resolve = (requiredRole: string): boolean => {
     if (!userDid || userRoles.length === 0) return false;
@@ -451,14 +484,52 @@ export async function resolveUserPermissions(
 
   // Fallback: no permission rows (app not enabled yet).
   // Use hardcoded defaults matching the original middleware behavior.
-  const DEFAULTS: Record<string, { c: string; r: string; u: string; d: string }> = {
-    'app.collectivesocial.group.list':            { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.listitem':        { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.listitem.status':  { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.segment':          { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.segment.progress':  { c: 'member', r: 'member', u: 'member', d: 'member' },
-    'app.collectivesocial.group.post':             { c: 'member', r: 'member', u: 'member', d: 'admin' },
-    'app.collectivesocial.group.reaction':         { c: 'member', r: 'member', u: 'member', d: 'member' },
+  const DEFAULTS: Record<
+    string,
+    { c: string; r: string; u: string; d: string }
+  > = {
+    'app.collectivesocial.group.list': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.listitem': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.listitem.status': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.segment': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.segment.progress': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'member',
+    },
+    'app.collectivesocial.group.post': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.reaction': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'member',
+    },
   };
 
   const result: Record<string, ResolvedCollectionPermission> = {};

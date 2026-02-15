@@ -29,10 +29,13 @@ const app = express();
 // Security headers
 app.use(helmet());
 
-// CORS — use CLIENT_URL in production, localhost in dev
+// CORS — use CORS_ORIGIN in production, localhost in dev
 app.use(
   cors({
-    origin: config.clientUrl || 'http://127.0.0.1:5173',
+    origin:
+      config.nodeEnv === 'production'
+        ? (config.corsOrigin ? [config.corsOrigin] : [])
+        : ['http://127.0.0.1:5173', 'http://localhost:5173'],
     credentials: true,
   })
 );
@@ -81,7 +84,10 @@ createAppContext().then((ctx) => {
   app.use(createErrorHandler(ctx));
 
   const server = app.listen(config.port, () => {
-    ctx.logger.info({ port: config.port }, `Server running on port ${config.port}`);
+    ctx.logger.info(
+      { port: config.port },
+      `Server running on port ${config.port}`
+    );
   });
 
   // Graceful shutdown

@@ -3,15 +3,8 @@ import { Pool } from 'pg';
 import { AuthSession, AuthState } from './models/auth';
 import { MediaItem } from './models/media';
 import { User } from './models/user';
-import {
-  GroupNotification,
-} from './models/groupContent';
-import {
-  Kysely,
-  PostgresDialect,
-  Generated,
-  sql,
-} from 'kysely';
+import { GroupNotification } from './models/groupContent';
+import { Kysely, PostgresDialect, Generated, sql } from 'kysely';
 
 export type PublicReview = {
   id: number;

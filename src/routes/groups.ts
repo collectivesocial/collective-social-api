@@ -17,17 +17,21 @@ export const createRouter = (ctx: AppContext) => {
       const userDid = agent?.did ?? undefined;
 
       try {
-        const query = typeof req.query.query === 'string' ? req.query.query.trim() : undefined;
+        const query =
+          typeof req.query.query === 'string'
+            ? req.query.query.trim()
+            : undefined;
         const communities = await opensocial.listCommunities(userDid, query);
 
         // If user is authenticated, check which communities they're a member of
         const memberCommunityDids = new Set<string>();
         if (agent) {
           try {
-            const membershipsResponse = await agent.com.atproto.repo.listRecords({
-              repo: agent.did!,
-              collection: 'community.opensocial.membership',
-            });
+            const membershipsResponse =
+              await agent.com.atproto.repo.listRecords({
+                repo: agent.did!,
+                collection: 'community.opensocial.membership',
+              });
             for (const record of membershipsResponse.data.records) {
               const value = record.value as { community?: string };
               if (value.community) {
@@ -101,7 +105,10 @@ export const createRouter = (ctx: AppContext) => {
             isMember = membership.isMember;
             isAdmin = membership.isAdmin;
           } catch (memberErr: any) {
-            console.error(`Membership check failed for ${did}:`, memberErr.message || memberErr);
+            console.error(
+              `Membership check failed for ${did}:`,
+              memberErr.message || memberErr
+            );
             // Not a member or check failed — that's fine for public view
           }
         }
@@ -109,13 +116,18 @@ export const createRouter = (ctx: AppContext) => {
         // Fetch group lists from PDS (source of truth)
         const COL_LIST = 'app.collectivesocial.group.list';
         const COL_LISTITEM = 'app.collectivesocial.group.listitem';
-        const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
+        const COL_LISTITEM_STATUS =
+          'app.collectivesocial.group.listitem.status';
 
-        const listRecords = await opensocial.listAllCommunityRecords(did, COL_LIST);
+        const listRecords = await opensocial.listAllCommunityRecords(
+          did,
+          COL_LIST
+        );
         const lists = listRecords
           .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
-          .sort((a: any, b: any) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          .sort(
+            (a: any, b: any) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           );
 
         // Fetch in-progress items across all lists
@@ -130,7 +142,12 @@ export const createRouter = (ctx: AppContext) => {
         );
         const inProgressItems = allItems
           .filter((r) => inProgressItemUris.has(r.uri))
-          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value, status: 'in-progress' }));
+          .map((r) => ({
+            uri: r.uri,
+            rkey: rkeyFromUri(r.uri),
+            ...r.value,
+            status: 'in-progress',
+          }));
 
         // Get member count
         let memberCount = 0;
