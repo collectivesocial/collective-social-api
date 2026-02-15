@@ -19,11 +19,12 @@ describe('migrations', () => {
   });
 
   it('should not contain legacy table migrations', () => {
-    // The old migrations 001-025 should be consolidated
-    // We should only have our clean initial migration
+    // Migration 001 is the consolidated schema.
+    // Migrations 002–025 are intentional no-op stubs so that Kysely
+    // doesn't complain about missing previously-executed migrations.
     const keys = Object.keys(migrations);
     expect(keys).toContain('001');
-    // Should NOT have the old incremental migrations
-    expect(keys.length).toBeLessThanOrEqual(5); // Allow room for a few future migrations
+    // 25 stubs (001 real + 002-025 no-ops) plus room for a few future migrations
+    expect(keys.length).toBeLessThanOrEqual(30);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Tests for the config module.
@@ -11,7 +11,8 @@ describe('config', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    // Reset module cache so config re-evaluates
+    // Reset vitest module cache so dynamic import() re-evaluates config
+    vi.resetModules();
     process.env = { ...originalEnv };
   });
 
@@ -36,9 +37,8 @@ describe('config', () => {
     process.env.DATABASE_URL = 'postgresql://localhost/test';
 
     await expect(async () => {
-      // Clear the module cache
-      delete require.cache[require.resolve('../src/config')];
-      require('../src/config');
+      const configModule = await import('../src/config');
+      return configModule.config;
     }).rejects.toThrow('must be set to a secure value in production');
   });
 
@@ -47,9 +47,12 @@ describe('config', () => {
     process.env.COOKIE_SECRET = 'a-very-secure-production-secret-32-chars!';
     delete process.env.DATABASE_URL;
 
+    // Mock dotenv so .env file doesn't re-inject DATABASE_URL
+    vi.doMock('dotenv', () => ({ default: { config: () => {} }, config: () => {} }));
+
     await expect(async () => {
-      delete require.cache[require.resolve('../src/config')];
-      require('../src/config');
+      const configModule = await import('../src/config');
+      return configModule.config;
     }).rejects.toThrow('DATABASE_URL must be set in production');
   });
 
@@ -58,10 +61,9 @@ describe('config', () => {
     process.env.PORT = '8080';
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
 
-    delete require.cache[require.resolve('../src/config')];
-    const { config } = require('../src/config');
-    expect(config.port).toBe(8080);
-    expect(typeof config.port).toBe('number');
+    const configModule = await import('../src/config');
+    expect(configModule.config.port).toBe(8080);
+    expect(typeof configModule.config.port).toBe('number');
   });
 
   it('should add clientUrl from CLIENT_URL env var', async () => {
@@ -69,9 +71,8 @@ describe('config', () => {
     process.env.CLIENT_URL = 'https://app.collectivesocial.app';
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
 
-    delete require.cache[require.resolve('../src/config')];
-    const { config } = require('../src/config');
-    expect(config.clientUrl).toBe('https://app.collectivesocial.app');
+    const configModule = await import('../src/config');
+    expect(configModule.config.clientUrl).toBe('https://app.collectivesocial.app');
   });
 
   it('should add corsOrigin from CORS_ORIGIN env var', async () => {
@@ -79,9 +80,8 @@ describe('config', () => {
     process.env.CORS_ORIGIN = 'https://app.collectivesocial.app';
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
 
-    delete require.cache[require.resolve('../src/config')];
-    const { config } = require('../src/config');
-    expect(config.corsOrigin).toBe('https://app.collectivesocial.app');
+    const configModule = await import('../src/config');
+    expect(configModule.config.corsOrigin).toBe('https://app.collectivesocial.app');
   });
 
   it('should set corsOrigin to undefined when CORS_ORIGIN is not set', async () => {
@@ -89,8 +89,7 @@ describe('config', () => {
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
     delete process.env.CORS_ORIGIN;
 
-    delete require.cache[require.resolve('../src/config')];
-    const { config } = require('../src/config');
-    expect(config.corsOrigin).toBeUndefined();
+    const configModule = await import('../src/config');
+    expect(configModule.config.corsOrigin).toBeUndefined();
   });
 });
