@@ -98,7 +98,10 @@ export const createRouter = (ctx: AppContext) => {
           mediaItemId,
           mediaType: mediaType || undefined,
           completedAt,
-          rating: rating !== undefined && rating !== null ? Number(rating) : undefined,
+          rating:
+            rating !== undefined && rating !== null
+              ? Number(rating)
+              : undefined,
           notes: notes || undefined,
           createdAt: now,
         };

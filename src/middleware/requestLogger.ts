@@ -18,7 +18,12 @@ export function createRequestLogger(ctx: AppContext) {
     // Log on response finish
     res.on('finish', () => {
       const duration = Date.now() - start;
-      const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+      const level =
+        res.statusCode >= 500
+          ? 'error'
+          : res.statusCode >= 400
+            ? 'warn'
+            : 'info';
 
       ctx.logger[level](
         {

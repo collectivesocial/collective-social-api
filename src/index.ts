@@ -81,7 +81,10 @@ createAppContext().then((ctx) => {
   app.use(createErrorHandler(ctx));
 
   const server = app.listen(config.port, () => {
-    ctx.logger.info({ port: config.port }, `Server running on port ${config.port}`);
+    ctx.logger.info(
+      { port: config.port },
+      `Server running on port ${config.port}`
+    );
   });
 
   // Graceful shutdown

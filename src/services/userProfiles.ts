@@ -79,7 +79,9 @@ export function buildThreadsWithProfiles(
       did: post.authorDid,
       handle: post.authorDid.slice(0, 20) + '…',
     },
-    replies: replies.filter((r) => r.parentPostUri === post.uri).map(buildThread),
+    replies: replies
+      .filter((r) => r.parentPostUri === post.uri)
+      .map(buildThread),
   });
 
   return topLevel.map(buildThread);

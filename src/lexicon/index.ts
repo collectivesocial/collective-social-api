@@ -8,17 +8,17 @@ import {
   type StreamConfigOrHandler,
   type MethodConfigOrHandler,
   createServer as createXrpcServer,
-} from '@atproto/xrpc-server'
-import { schemas } from './lexicons.js'
+} from '@atproto/xrpc-server';
+import { schemas } from './lexicons.js';
 
 export function createServer(options?: XrpcOptions): Server {
-  return new Server(options)
+  return new Server(options);
 }
 
 export class Server {
-  xrpc: XrpcServer
+  xrpc: XrpcServer;
 
   constructor(options?: XrpcOptions) {
-    this.xrpc = createXrpcServer(schemas, options)
+    this.xrpc = createXrpcServer(schemas, options);
   }
 }

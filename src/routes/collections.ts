@@ -604,10 +604,11 @@ export const createRouter = (ctx: AppContext) => {
 
         if (existingItem) {
           // Already tracked — optionally upgrade status
-          const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.useritem',
-          });
+          const useritemsResponse =
+            await agent.api.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.useritem',
+            });
           const useritem = mediaItemId
             ? useritemsResponse.data.records.find(
                 (r: any) => r.value.mediaItemId === mediaItemId
@@ -710,7 +711,8 @@ export const createRouter = (ctx: AppContext) => {
         const existingInList = itemsResponse.data.records
           .filter((r: any) => r.value.list === defaultListUri)
           .map((r: any) => r.value.order || 0);
-        const maxOrder = existingInList.length > 0 ? Math.max(...existingInList) : 0;
+        const maxOrder =
+          existingInList.length > 0 ? Math.max(...existingInList) : 0;
 
         const now = new Date();
         const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
@@ -813,11 +815,10 @@ export const createRouter = (ctx: AppContext) => {
         let userItemUri: string | null = null;
 
         // Check for existing useritem by listing all and matching mediaItemId
-        const useritemsResponse =
-          await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.useritem',
-          });
+        const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.useritem',
+        });
 
         const existingUseritem = mediaItemId
           ? useritemsResponse.data.records.find(
@@ -1027,9 +1028,7 @@ export const createRouter = (ctx: AppContext) => {
           .filter((record: any) => record.value.list === listUri)
           .map((record: any) => record.value.order || 0);
         const maxOrder =
-          existingItemsInList.length > 0
-            ? Math.max(...existingItemsInList)
-            : 0;
+          existingItemsInList.length > 0 ? Math.max(...existingItemsInList) : 0;
         const newOrder = maxOrder + 1;
 
         const now = new Date();

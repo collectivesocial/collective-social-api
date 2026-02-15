@@ -34,10 +34,15 @@ export function requireGroupMember(ctx: AppContext) {
         return res.status(400).json({ error: 'communityDid is required' });
       }
 
-      const membership = await opensocial.checkMembership(communityDid, agent.did);
+      const membership = await opensocial.checkMembership(
+        communityDid,
+        agent.did
+      );
 
       if (!membership.isMember) {
-        return res.status(403).json({ error: 'You are not a member of this community' });
+        return res
+          .status(403)
+          .json({ error: 'You are not a member of this community' });
       }
 
       req.groupAuth = {
@@ -50,7 +55,9 @@ export function requireGroupMember(ctx: AppContext) {
       next();
     } catch (error: any) {
       console.error('Group membership check failed:', error.message);
-      return res.status(error.status || 500).json({ error: error.message || 'Membership check failed' });
+      return res
+        .status(error.status || 500)
+        .json({ error: error.message || 'Membership check failed' });
     }
   };
 }
@@ -67,7 +74,9 @@ export function requireGroupAdmin(ctx: AppContext) {
       // If groupAuth is already set by requireGroupMember, just check isAdmin
       if (req.groupAuth) {
         if (!req.groupAuth.isAdmin) {
-          return res.status(403).json({ error: 'Only community admins can perform this action' });
+          return res
+            .status(403)
+            .json({ error: 'Only community admins can perform this action' });
         }
         return next();
       }
@@ -83,14 +92,21 @@ export function requireGroupAdmin(ctx: AppContext) {
         return res.status(400).json({ error: 'communityDid is required' });
       }
 
-      const membership = await opensocial.checkMembership(communityDid, agent.did);
+      const membership = await opensocial.checkMembership(
+        communityDid,
+        agent.did
+      );
 
       if (!membership.isMember) {
-        return res.status(403).json({ error: 'You are not a member of this community' });
+        return res
+          .status(403)
+          .json({ error: 'You are not a member of this community' });
       }
 
       if (!membership.isAdmin) {
-        return res.status(403).json({ error: 'Only community admins can perform this action' });
+        return res
+          .status(403)
+          .json({ error: 'Only community admins can perform this action' });
       }
 
       req.groupAuth = {
@@ -103,7 +119,9 @@ export function requireGroupAdmin(ctx: AppContext) {
       next();
     } catch (error: any) {
       console.error('Group admin check failed:', error.message);
-      return res.status(error.status || 500).json({ error: error.message || 'Admin check failed' });
+      return res
+        .status(error.status || 500)
+        .json({ error: error.message || 'Admin check failed' });
     }
   };
 }

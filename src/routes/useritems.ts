@@ -294,9 +294,13 @@ export const createRouter = (ctx: AppContext) => {
           mediaItemId,
           mediaType: mediaType || undefined,
           status: status || 'want',
-          rating: rating !== undefined && rating !== null ? Number(rating) : undefined,
+          rating:
+            rating !== undefined && rating !== null
+              ? Number(rating)
+              : undefined,
           notes: notes || undefined,
-          recommendations: recommendations.length > 0 ? recommendations : undefined,
+          recommendations:
+            recommendations.length > 0 ? recommendations : undefined,
           createdAt: now,
           updatedAt: now,
         };
@@ -405,8 +409,13 @@ export const createRouter = (ctx: AppContext) => {
         const updatedRecord: AppCollectiveSocialFeedUseritem.Record = {
           ...existingData,
           status: status || existingData.status,
-          rating: rating !== undefined ? (rating === null ? undefined : Number(rating)) : existingData.rating,
-          notes: notes !== undefined ? (notes || undefined) : existingData.notes,
+          rating:
+            rating !== undefined
+              ? rating === null
+                ? undefined
+                : Number(rating)
+              : existingData.rating,
+          notes: notes !== undefined ? notes || undefined : existingData.notes,
           review: review !== undefined ? review : existingData.review,
           completedAt: newCompletedAt,
           updatedAt: now,
@@ -605,10 +614,7 @@ export const createRouter = (ctx: AppContext) => {
                   } as any)
                   .execute();
               } catch (err) {
-                ctx.logger.error(
-                  { err },
-                  'Failed to create review feed event'
-                );
+                ctx.logger.error({ err }, 'Failed to create review feed event');
               }
             }
           }

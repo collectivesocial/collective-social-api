@@ -247,7 +247,9 @@ export async function adminDeleteGroupPost(
     COL_POST_INDEX
   );
 
-  const indexEntry = allIndexes.find((idx: any) => idx.value.postUri === postUri);
+  const indexEntry = allIndexes.find(
+    (idx: any) => idx.value.postUri === postUri
+  );
   if (!indexEntry) {
     throw new Error('Post index not found');
   }

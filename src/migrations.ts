@@ -503,8 +503,12 @@ migrations['001'] = {
 for (let i = 2; i <= 25; i++) {
   const key = String(i).padStart(3, '0');
   migrations[key] = {
-    async up(_db: Kysely<any>) { /* already applied via consolidated 001 */ },
-    async down(_db: Kysely<any>) { /* no-op */ },
+    async up(_db: Kysely<any>) {
+      /* already applied via consolidated 001 */
+    },
+    async down(_db: Kysely<any>) {
+      /* no-op */
+    },
   };
 }
 
