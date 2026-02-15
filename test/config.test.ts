@@ -73,4 +73,24 @@ describe('config', () => {
     const { config } = require('../src/config');
     expect(config.clientUrl).toBe('https://app.collectivesocial.app');
   });
+
+  it('should add corsOrigin from CORS_ORIGIN env var', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.CORS_ORIGIN = 'https://app.collectivesocial.app';
+    process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
+
+    delete require.cache[require.resolve('../src/config')];
+    const { config } = require('../src/config');
+    expect(config.corsOrigin).toBe('https://app.collectivesocial.app');
+  });
+
+  it('should set corsOrigin to undefined when CORS_ORIGIN is not set', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
+    delete process.env.CORS_ORIGIN;
+
+    delete require.cache[require.resolve('../src/config')];
+    const { config } = require('../src/config');
+    expect(config.corsOrigin).toBeUndefined();
+  });
 });
