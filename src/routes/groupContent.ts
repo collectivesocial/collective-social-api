@@ -82,7 +82,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let list: PdsRecord;
       try {
@@ -198,7 +198,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
       const { name, description, purpose, segmentType } = req.body;
 
       // Fetch existing to merge
@@ -246,7 +246,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       // Get the list URI to find children
       let list: PdsRecord;
@@ -303,7 +303,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { listRkey } = req.params;
+      const listRkey = req.params.listRkey as string;
 
       // Get the list URI
       let list: PdsRecord;
@@ -341,7 +341,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { listRkey } = req.params;
+      const listRkey = req.params.listRkey as string;
       const { title, creator, mediaItemId, mediaType, order } = req.body;
 
       if (!title || !mediaType) {
@@ -431,7 +431,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
       const { status } = req.body;
 
       const validStatuses = ['not-started', 'in-progress', 'completed'];
@@ -506,7 +506,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let item: PdsRecord;
       try {
@@ -538,7 +538,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       // Get the item URI
       let item: PdsRecord;
@@ -576,7 +576,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       let item: PdsRecord;
       try {
@@ -647,7 +647,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       let item: PdsRecord;
       try {
@@ -788,7 +788,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let existing: PdsRecord;
       try {
@@ -855,7 +855,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       // Delete any posts associated with this segment
       let segment: PdsRecord;
@@ -922,7 +922,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
 
       let segment: PdsRecord;
       try {
@@ -959,7 +959,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
 
       let segment: PdsRecord;
       try {
@@ -1109,7 +1109,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       await opensocial.deleteCommunityRecord(
         communityDid,
@@ -1135,7 +1135,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
 
       const agent = await getSessionAgent(req, res, ctx);
       if (!agent) {
@@ -1191,7 +1191,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       const agent = await getSessionAgent(req, res, ctx);
       if (!agent) {
@@ -1394,7 +1394,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { postRkey } = req.params;
+      const postRkey = req.params.postRkey as string;
 
       let post: PdsRecord;
       try {
@@ -1444,7 +1444,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { postRkey } = req.params;
+      const postRkey = req.params.postRkey as string;
       const { emoji } = req.body;
 
       if (!emoji) {

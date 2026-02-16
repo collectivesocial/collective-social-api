@@ -221,7 +221,7 @@ export const createRouter = (ctx: AppContext) => {
 
   // GET /:shortCode - Resolve a share link and increment counter
   router.get('/:shortCode', async (req: Request, res: Response) => {
-    const { shortCode } = req.params;
+    const shortCode = req.params.shortCode as string;
 
     try {
       // Find the share link
@@ -550,7 +550,7 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const userDid = agent.did!;
-        const linkId = parseInt(req.params.id);
+        const linkId = parseInt(req.params.id as string);
 
         if (isNaN(linkId)) {
           return res.status(400).json({ error: 'Invalid link ID' });

@@ -169,7 +169,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -248,7 +248,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -321,7 +321,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const sourceListUri = decodeURIComponent(req.params.listUri);
+        const sourceListUri = decodeURIComponent(req.params.listUri as string);
 
         // Get the source list to clone
         const listsResponse = await agent.api.com.atproto.repo.listRecords({
@@ -434,7 +434,7 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         // Decode URI from route param
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // List all listitem records from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({
@@ -776,7 +776,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Check if item already exists in this list
         const existingItemsResponse =
@@ -1083,7 +1083,7 @@ export const createRouter = (ctx: AppContext) => {
       const { order } = req.body;
 
       try {
-        const itemUri = decodeURIComponent(req.params.itemUri);
+        const itemUri = decodeURIComponent(req.params.itemUri as string);
 
         // Extract DID from itemUri to verify ownership
         const itemDidMatch = itemUri.match(/^at:\/\/([^\/]+)/);
@@ -1162,7 +1162,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -1225,8 +1225,8 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
-        const itemUri = decodeURIComponent(req.params.itemUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
+        const itemUri = decodeURIComponent(req.params.itemUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -1272,7 +1272,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=60');
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       // Try to get authenticated agent, otherwise create unauthenticated one
       let queryAgent = await getSessionAgent(req, res, ctx);
@@ -1352,7 +1352,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=60');
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       // Try to get authenticated agent, otherwise create unauthenticated one
       let queryAgent = await getSessionAgent(req, res, ctx);

@@ -69,7 +69,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:did/permissions',
     handler(async (req: Request, res: Response) => {
-      const { did } = req.params;
+      const did = req.params.did as string;
       const agent = await getSessionAgent(req, res, ctx);
       const userDid = agent?.did ?? undefined;
 
@@ -89,7 +89,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:did',
     handler(async (req: Request, res: Response) => {
-      const { did } = req.params;
+      const did = req.params.did as string;
       const agent = await getSessionAgent(req, res, ctx);
       const userDid = agent?.did ?? undefined;
 
@@ -224,7 +224,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       try {
         // Ask OpenSocial for the join record template
@@ -263,7 +263,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       try {
         await opensocial.deleteCommunity(did, agent.did!);

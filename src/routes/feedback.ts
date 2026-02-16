@@ -130,7 +130,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const { status, adminNotes } = req.body;
-      const feedbackId = parseInt(req.params.id);
+      const feedbackId = parseInt(req.params.id as string);
 
       if (isNaN(feedbackId)) {
         return res.status(400).json({ error: 'Invalid feedback ID' });

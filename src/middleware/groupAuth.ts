@@ -29,7 +29,7 @@ export function requireGroupMember(ctx: AppContext) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const communityDid = req.params.communityDid;
+      const communityDid = req.params.communityDid as string;
       if (!communityDid) {
         return res.status(400).json({ error: 'communityDid is required' });
       }
@@ -87,7 +87,7 @@ export function requireGroupAdmin(ctx: AppContext) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const communityDid = req.params.communityDid;
+      const communityDid = req.params.communityDid as string;
       if (!communityDid) {
         return res.status(400).json({ error: 'communityDid is required' });
       }

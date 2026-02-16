@@ -61,7 +61,8 @@ export const createRouter = (ctx: AppContext) => {
     }
 
     try {
-      const profile = await agent.getProfile({ actor: req.params.handle });
+      const handle = Array.isArray(req.params.handle) ? req.params.handle[0] : req.params.handle;
+      const profile = await agent.getProfile({ actor: handle });
 
       // Get collection count
       const collectionsResponse = await agent.api.com.atproto.repo.listRecords({

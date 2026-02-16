@@ -157,7 +157,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=30');
 
-      const reviewUri = decodeURIComponent(req.params.encodedUri);
+      const reviewUri = decodeURIComponent(req.params.encodedUri as string);
 
       try {
         const comments = await ctx.db
@@ -216,7 +216,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=30');
 
-      const commentUri = decodeURIComponent(req.params.encodedUri);
+      const commentUri = decodeURIComponent(req.params.encodedUri as string);
 
       try {
         const replies = await ctx.db
@@ -278,7 +278,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const commentUri = decodeURIComponent(req.params.encodedUri);
+      const commentUri = decodeURIComponent(req.params.encodedUri as string);
       const { text } = req.body;
 
       if (!text || text.trim().length === 0) {
@@ -370,7 +370,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const commentUri = decodeURIComponent(req.params.encodedUri);
+      const commentUri = decodeURIComponent(req.params.encodedUri as string);
 
       try {
         // Check if the comment exists and belongs to the user

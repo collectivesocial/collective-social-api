@@ -111,7 +111,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const mediaItemId = parseInt(req.params.mediaItemId, 10);
+      const mediaItemId = parseInt(req.params.mediaItemId as string, 10);
       if (isNaN(mediaItemId)) {
         return res.status(400).json({ error: 'Invalid mediaItemId' });
       }
@@ -374,7 +374,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const { status, rating, notes, review, completedAt } = req.body;
-      const useritemUri = decodeURIComponent(req.params.useritemUri);
+      const useritemUri = decodeURIComponent(req.params.useritemUri as string);
 
       // Extract rkey from URI
       const rkeyMatch = useritemUri.match(/\/([^\/]+)$/);
@@ -645,7 +645,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const useritemUri = decodeURIComponent(req.params.useritemUri);
+      const useritemUri = decodeURIComponent(req.params.useritemUri as string);
       const rkeyMatch = useritemUri.match(/\/([^\/]+)$/);
       if (!rkeyMatch) {
         return res.status(400).json({ error: 'Invalid useritem URI' });
@@ -706,7 +706,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const userDid = req.params.did;
+      const userDid = req.params.did as string;
 
       try {
         const allUseritems: any[] = [];
