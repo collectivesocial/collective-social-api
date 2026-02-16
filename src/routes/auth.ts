@@ -106,10 +106,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       }
 
       // Redirect back to the React app
-      const redirectUrl =
-        config.nodeEnv === 'production'
-          ? config.serviceUrl || 'http://127.0.0.1:5173'
-          : 'http://127.0.0.1:5173';
+      const redirectUrl = config.clientUrl || 'http://127.0.0.1:5173';
       return res.redirect(redirectUrl);
     })
   );
