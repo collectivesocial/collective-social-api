@@ -43,6 +43,43 @@ app.use(
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Re-encode AT URIs that were decoded by the reverse proxy (e.g. Azure/Envoy).
+// Proxies often decode %2F→/ in paths before forwarding, which breaks Express
+// route params like /:listUri that expect the AT URI as a single path segment.
+app.use((req, _res, next) => {
+  const atUriPattern = /\/at:\/\//;
+  if (atUriPattern.test(req.url)) {
+    // Find the prefix (e.g. "/collections/") before the AT URI
+    const atIndex = req.url.indexOf('/at://');
+    const prefix = req.url.substring(0, atIndex + 1); // includes trailing /
+    const rest = req.url.substring(atIndex + 1);      // "at://did:plc:.../collection/rkey..."
+
+    // The rest may have a sub-path after the AT URI (e.g. "/items/at://...")
+    // AT URIs have the form: at://did/collection/rkey
+    // So we need to find where the AT URI ends
+    const atParts = rest.split('/');
+    // at: '' did collection rkey = indices 0,1,2,3,4
+    // Reconstruct: "at://did/collection/rkey"
+    const atUri = atParts.slice(0, 5).join('/');
+    const suffix = atParts.length > 5 ? '/' + atParts.slice(5).join('/') : '';
+
+    // Check if the suffix also contains an AT URI (e.g. /items/at://...)
+    let encodedSuffix = suffix;
+    if (atUriPattern.test(suffix)) {
+      const innerAtIndex = suffix.indexOf('/at://');
+      const suffixPrefix = suffix.substring(0, innerAtIndex + 1);
+      const innerRest = suffix.substring(innerAtIndex + 1);
+      const innerParts = innerRest.split('/');
+      const innerAtUri = innerParts.slice(0, 5).join('/');
+      const innerSuffix = innerParts.length > 5 ? '/' + innerParts.slice(5).join('/') : '';
+      encodedSuffix = suffixPrefix + encodeURIComponent(innerAtUri) + innerSuffix;
+    }
+
+    req.url = prefix + encodeURIComponent(atUri) + encodedSuffix;
+  }
+  next();
+});
+
 // Health check — available before context initialization
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
