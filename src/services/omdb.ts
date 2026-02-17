@@ -74,12 +74,15 @@ export async function searchOMDB(
     throw new Error('OMDB API key not configured');
   }
 
-  const url = `http://www.omdbapi.com/?apikey=${config.omdbApiKey}&s=${encodeURIComponent(query)}&type=${type}`;
+  const url = `https://www.omdbapi.com/?apikey=${config.omdbApiKey}&s=${encodeURIComponent(query)}&type=${type}`;
 
   const response = await fetch(url);
   const data = (await response.json()) as OMDBSearchResponse;
 
   if (data.Response === 'False') {
+    if (data.Error && data.Error !== 'Movie not found!') {
+      console.error('OMDB search error:', data.Error, { query, type });
+    }
     return { results: [], total: 0 };
   }
 
@@ -113,12 +116,15 @@ export async function getOMDBDetails(
     throw new Error('OMDB API key not configured');
   }
 
-  const url = `http://www.omdbapi.com/?apikey=${config.omdbApiKey}&i=${imdbId}`;
+  const url = `https://www.omdbapi.com/?apikey=${config.omdbApiKey}&i=${imdbId}`;
 
   const response = await fetch(url);
   const data = (await response.json()) as OMDBDetailResponse;
 
   if (data.Response === 'False') {
+    if (data.Error) {
+      console.error('OMDB detail error:', data.Error, { imdbId });
+    }
     return null;
   }
 
@@ -157,7 +163,7 @@ export async function getTotalEpisodes(imdbId: string): Promise<number | null> {
 
     // Fetch each season to count episodes
     for (let season = 1; season <= totalSeasons; season++) {
-      const url = `http://www.omdbapi.com/?apikey=${config.omdbApiKey}&i=${imdbId}&Season=${season}`;
+      const url = `https://www.omdbapi.com/?apikey=${config.omdbApiKey}&i=${imdbId}&Season=${season}`;
       const response = await fetch(url);
       const data = (await response.json()) as OMDBSeasonResponse;
 

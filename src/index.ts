@@ -46,36 +46,56 @@ app.use(express.urlencoded({ extended: true }));
 // Re-encode AT URIs that were decoded by the reverse proxy (e.g. Azure/Envoy).
 // Proxies often decode %2F→/ in paths before forwarding, which breaks Express
 // route params like /:listUri that expect the AT URI as a single path segment.
+// The AT URI may appear as:
+//   /at://did/collection/rkey   — proxy decoded %2F to /
+//   /at:/did/collection/rkey    — proxy decoded %2F and path-normalised // to /
+//   /at%3A//did/collection/rkey — proxy left %3A but decoded %2F
+//   /at%3A/did/collection/rkey  — proxy decoded %2F and path-normalised //
 app.use((req, _res, next) => {
-  const atUriPattern = /\/at:\/\//;
-  if (atUriPattern.test(req.url)) {
-    // Find the prefix (e.g. "/collections/") before the AT URI
-    const atIndex = req.url.indexOf('/at://');
-    const prefix = req.url.substring(0, atIndex + 1); // includes trailing /
-    const rest = req.url.substring(atIndex + 1);      // "at://did:plc:.../collection/rkey..."
+  // Match "at://" or "at:/" or "at%3A//" or "at%3A/" followed by a DID-like segment
+  const atUriRe = /\/at(?:%3A|:)\/\//i;
+  const atUriSingleSlashRe = /\/at(?:%3A|:)\/(?!\/)/i;
 
-    // The rest may have a sub-path after the AT URI (e.g. "/items/at://...")
-    // AT URIs have the form: at://did/collection/rkey
-    // So we need to find where the AT URI ends
-    const atParts = rest.split('/');
-    // at: '' did collection rkey = indices 0,1,2,3,4
-    // Reconstruct: "at://did/collection/rkey"
-    const atUri = atParts.slice(0, 5).join('/');
-    const suffix = atParts.length > 5 ? '/' + atParts.slice(5).join('/') : '';
+  if (atUriRe.test(req.url) || atUriSingleSlashRe.test(req.url)) {
+    // Normalise: find the AT URI start and rebuild it properly
+    const match = req.url.match(/\/at(?:%3A|:)\/{1,2}/i);
+    if (match && match.index !== undefined) {
+      const prefix = req.url.substring(0, match.index + 1); // e.g. "/collections/"
+      const afterAt = req.url.substring(match.index + match[0].length); // "did:plc:.../collection/rkey/items..."
 
-    // Check if the suffix also contains an AT URI (e.g. /items/at://...)
-    let encodedSuffix = suffix;
-    if (atUriPattern.test(suffix)) {
-      const innerAtIndex = suffix.indexOf('/at://');
-      const suffixPrefix = suffix.substring(0, innerAtIndex + 1);
-      const innerRest = suffix.substring(innerAtIndex + 1);
-      const innerParts = innerRest.split('/');
-      const innerAtUri = innerParts.slice(0, 5).join('/');
-      const innerSuffix = innerParts.length > 5 ? '/' + innerParts.slice(5).join('/') : '';
-      encodedSuffix = suffixPrefix + encodeURIComponent(innerAtUri) + innerSuffix;
+      // AT URIs have the form: at://did/collection/rkey  (3 segments after "at://")
+      const segments = afterAt.split('/');
+      // segments[0] = did (may be percent-encoded, e.g. did%3Aplc%3Axxx)
+      // segments[1] = collection
+      // segments[2] = rkey
+      // segments[3+] = rest of URL path (e.g. "items", "items/at%3A...")
+      if (segments.length >= 3) {
+        const did = decodeURIComponent(segments[0]);
+        const collection = decodeURIComponent(segments[1]);
+        const rkey = decodeURIComponent(segments[2]);
+        const atUri = `at://${did}/${collection}/${rkey}`;
+        const suffix = segments.length > 3 ? '/' + segments.slice(3).join('/') : '';
+
+        // Recursively handle a second AT URI in the suffix (e.g. /items/:itemUri)
+        let processedSuffix = suffix;
+        const innerMatch = suffix.match(/\/at(?:%3A|:)\/{1,2}/i);
+        if (innerMatch && innerMatch.index !== undefined) {
+          const sPre = suffix.substring(0, innerMatch.index + 1);
+          const sAfterAt = suffix.substring(innerMatch.index + innerMatch[0].length);
+          const innerSegs = sAfterAt.split('/');
+          if (innerSegs.length >= 3) {
+            const iDid = decodeURIComponent(innerSegs[0]);
+            const iCol = decodeURIComponent(innerSegs[1]);
+            const iRkey = decodeURIComponent(innerSegs[2]);
+            const innerAtUri = `at://${iDid}/${iCol}/${iRkey}`;
+            const iSuffix = innerSegs.length > 3 ? '/' + innerSegs.slice(3).join('/') : '';
+            processedSuffix = sPre + encodeURIComponent(innerAtUri) + iSuffix;
+          }
+        }
+
+        req.url = prefix + encodeURIComponent(atUri) + processedSuffix;
+      }
     }
-
-    req.url = prefix + encodeURIComponent(atUri) + encodedSuffix;
   }
   next();
 });
