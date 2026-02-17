@@ -157,3 +157,25 @@ export namespace AppCollectiveSocialFeedComment {
     updatedAt: string;
   }
 }
+
+export namespace AppCollectiveSocialFeedGoal {
+  export interface Record {
+    $type?: 'app.collectivesocial.feed.goal';
+    title: string;
+    mediaType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
+    targetCount: number;
+    startDate: string; // datetime
+    endDate: string; // datetime
+    visibility?: 'public' | 'private';
+    createdAt: string;
+  }
+}

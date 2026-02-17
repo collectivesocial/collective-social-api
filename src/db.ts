@@ -33,8 +33,37 @@ export type Feedback = {
 export type FeedEvent = {
   id: number;
   eventName: string;
+  eventType: string | null;
   mediaLink: string | null;
   userDid: string;
+  createdAt: Date;
+};
+
+export type UserActivityLog = {
+  did: string;
+  activity_date: string;
+  activity_count: number;
+};
+
+export type BlueskyShareEvent = {
+  id: Generated<number>;
+  userDid: string;
+  shareType: string;
+  shareTargetId: string | null;
+  createdAt: Date;
+};
+
+export type Goal = {
+  id: Generated<number>;
+  uri: string;
+  authorDid: string;
+  title: string;
+  mediaType: string | null;
+  targetCount: number;
+  startDate: Date;
+  endDate: Date;
+  visibility: string;
+  cachedCompletedCount: number;
   createdAt: Date;
 };
 
@@ -46,6 +75,7 @@ export type ShareLink = {
   mediaType: string | null;
   collectionUri: string | null;
   reviewId: number | null;
+  goalUri: string | null;
   timesClicked: Generated<number>;
   createdAt: Date;
   updatedAt: Date;
@@ -114,6 +144,9 @@ export type DatabaseSchema = {
   comments: PublicComment;
   reactions: Reaction;
   group_notifications: GroupNotification;
+  user_activity_log: UserActivityLog;
+  bluesky_share_events: BlueskyShareEvent;
+  goals: Goal;
 };
 
 // APIs

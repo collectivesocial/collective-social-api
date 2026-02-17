@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { getIronSession } from 'iron-session';
+import { sql } from 'kysely';
 import { config } from '../config';
 import type { AppContext } from '../context';
 
@@ -101,6 +102,7 @@ export function createUserActivityTracker(ctx: AppContext) {
                 .insertInto('feed_events')
                 .values({
                   eventName: `${userHandle} joined Collective!`,
+                  eventType: 'user_joined',
                   mediaLink: null,
                   userDid: session.did,
                   createdAt: now,
@@ -172,6 +174,21 @@ export function createUserActivityTracker(ctx: AppContext) {
               .where('did', '=', session.did)
               .execute();
           }
+        }
+
+        // Log daily activity for analytics (WAU / retention)
+        try {
+          await sql`
+            INSERT INTO user_activity_log (did, activity_date, activity_count)
+            VALUES (${session.did}, CURRENT_DATE, 1)
+            ON CONFLICT (did, activity_date)
+            DO UPDATE SET activity_count = user_activity_log.activity_count + 1
+          `.execute(ctx.db);
+        } catch (activityErr) {
+          ctx.logger.error(
+            { err: activityErr },
+            'Failed to log user activity'
+          );
         }
       }
     } catch (err) {

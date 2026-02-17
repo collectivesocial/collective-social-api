@@ -336,6 +336,7 @@ export const createRouter = (ctx: AppContext) => {
             .insertInto('feed_events')
             .values({
               eventName,
+              eventType: 'item_status_change',
               mediaLink: `/items/${mediaItemId}`,
               userDid: agent.did!,
               createdAt: new Date(),
@@ -608,6 +609,7 @@ export const createRouter = (ctx: AppContext) => {
                   .insertInto('feed_events')
                   .values({
                     eventName,
+                    eventType: 'item_reviewed',
                     mediaLink: `/items/${mediaItemId}`,
                     userDid: agent.did!,
                     createdAt: new Date(),

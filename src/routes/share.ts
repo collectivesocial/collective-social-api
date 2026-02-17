@@ -22,22 +22,22 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { mediaItemId, mediaType, collectionUri, reviewId } = req.body;
+      const { mediaItemId, mediaType, collectionUri, reviewId, goalUri } = req.body;
 
-      // Validate: must provide either media item, collection, or review, not multiple
-      const providedTypes = [mediaItemId, collectionUri, reviewId].filter(
+      // Validate: must provide either media item, collection, review, or goal, not multiple
+      const providedTypes = [mediaItemId, collectionUri, reviewId, goalUri].filter(
         Boolean
       ).length;
       if (providedTypes === 0) {
         return res.status(400).json({
           error:
-            'Provide either mediaItemId and mediaType, collectionUri, or reviewId',
+            'Provide either mediaItemId and mediaType, collectionUri, reviewId, or goalUri',
         });
       }
       if (providedTypes > 1) {
         return res.status(400).json({
           error:
-            'Provide only one of: mediaItemId and mediaType, collectionUri, or reviewId',
+            'Provide only one of: mediaItemId and mediaType, collectionUri, reviewId, or goalUri',
         });
       }
 
@@ -55,7 +55,14 @@ export const createRouter = (ctx: AppContext) => {
 
         // Check if a share link already exists
         let existing;
-        if (reviewId) {
+        if (goalUri) {
+          existing = await ctx.db
+            .selectFrom('share_links')
+            .selectAll()
+            .where('userDid', '=', userDid)
+            .where('goalUri', '=', goalUri)
+            .executeTakeFirst();
+        } else if (reviewId) {
           existing = await ctx.db
             .selectFrom('share_links')
             .selectAll()
@@ -82,7 +89,14 @@ export const createRouter = (ctx: AppContext) => {
         if (existing) {
           // Get title for response
           let title = null;
-          if (reviewId) {
+          if (goalUri) {
+            const goal = await ctx.db
+              .selectFrom('goals')
+              .select(['title'])
+              .where('uri', '=', goalUri)
+              .executeTakeFirst();
+            title = goal?.title ? `Goal: ${goal.title}` : null;
+          } else if (reviewId) {
             // Get review and media item details
             const review = await ctx.db
               .selectFrom('reviews')
@@ -156,6 +170,7 @@ export const createRouter = (ctx: AppContext) => {
             mediaType: mediaType || null,
             collectionUri: collectionUri || null,
             reviewId: reviewId || null,
+            goalUri: goalUri || null,
             timesClicked: 0,
             createdAt: now,
             updatedAt: now,
@@ -165,7 +180,15 @@ export const createRouter = (ctx: AppContext) => {
 
         // Get title for response
         let title = null;
-        if (reviewId) {
+        if (goalUri) {
+          // Fetch goal title from Postgres index
+          const goal = await ctx.db
+            .selectFrom('goals')
+            .select(['title'])
+            .where('uri', '=', goalUri)
+            .executeTakeFirst();
+          title = goal?.title ? `Goal: ${goal.title}` : 'Goal on Collective';
+        } else if (reviewId) {
           // Get review and media item details
           const review = await ctx.db
             .selectFrom('reviews')
@@ -201,6 +224,7 @@ export const createRouter = (ctx: AppContext) => {
             mediaType,
             collectionUri,
             reviewId,
+            goalUri,
             shortCode,
           },
           'Share link created'
@@ -215,6 +239,48 @@ export const createRouter = (ctx: AppContext) => {
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to create share link');
         res.status(500).json({ error: 'Failed to create share link' });
+      }
+    })
+  );
+
+  // POST /share/bluesky-click - Track intent to share on Bluesky
+  router.post(
+    '/bluesky-click',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      const { shareType, shareTargetId } = req.body;
+      if (
+        !shareType ||
+        !['item', 'collection', 'review', 'goal'].includes(shareType)
+      ) {
+        return res
+          .status(400)
+          .json({ error: 'shareType must be item, collection, review, or goal' });
+      }
+
+      try {
+        await ctx.db
+          .insertInto('bluesky_share_events')
+          .values({
+            userDid: agent.did!,
+            shareType,
+            shareTargetId: shareTargetId || null,
+            createdAt: new Date(),
+          } as any)
+          .execute();
+
+        ctx.logger.info(
+          { userDid: agent.did, shareType, shareTargetId },
+          'Bluesky share intent tracked'
+        );
+        res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to track Bluesky share');
+        res.status(500).json({ error: 'Failed to track share' });
       }
     })
   );
@@ -361,6 +427,26 @@ export const createRouter = (ctx: AppContext) => {
             }
             imageUrl = mediaItem.coverImage || '';
           }
+        } else if (shareLink.goalUri) {
+          // Fetch goal details for Open Graph tags
+          const goal = await ctx.db
+            .selectFrom('goals')
+            .select(['title', 'mediaType', 'targetCount', 'cachedCompletedCount', 'startDate', 'endDate'])
+            .where('uri', '=', shareLink.goalUri)
+            .executeTakeFirst();
+
+          if (goal) {
+            const pct = Math.min(100, Math.round((goal.cachedCompletedCount / goal.targetCount) * 100));
+            const mediaLabel = goal.mediaType || 'items';
+            const emoji = goal.mediaType === 'book' ? '📚' : goal.mediaType === 'movie' ? '🎬' : goal.mediaType === 'tv' ? '📺' : '🎯';
+            title = escapeHtml(`${emoji} ${goal.title}`);
+            description = escapeHtml(
+              `${goal.cachedCompletedCount} of ${goal.targetCount} ${mediaLabel} completed (${pct}%)`
+            );
+          } else {
+            title = 'Goal on Collective';
+            description = 'Track your media goals on Collective!';
+          }
         }
 
         // Serve HTML with Open Graph meta tags
@@ -430,6 +516,7 @@ export const createRouter = (ctx: AppContext) => {
         mediaType: shareLink.mediaType,
         collectionUri: shareLink.collectionUri,
         reviewId: shareLink.reviewId,
+        goalUri: shareLink.goalUri,
         recommendedBy: shareLink.userDid,
         timesClicked: shareLink.timesClicked + 1,
         createdAt: shareLink.createdAt,

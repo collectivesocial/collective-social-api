@@ -6,6 +6,7 @@ import { createRouter as createAuthRouter } from './routes/auth';
 import { createRouter as createCollectionsRouter } from './routes/collections';
 import { createRouter as createMediaRouter } from './routes/media';
 import { createRouter as createAdminRouter } from './routes/admin';
+import { createRouter as createAnalyticsRouter } from './routes/analytics';
 import { createRouter as createFeedbackRouter } from './routes/feedback';
 import { createRouter as createFeedRouter } from './routes/feed';
 import { createRouter as createShareRouter } from './routes/share';
@@ -18,6 +19,7 @@ import { createRouter as createGroupContentRouter } from './routes/groupContent'
 import { createRouter as createNotificationsRouter } from './routes/notifications';
 import { createRouter as createUseritemsRouter } from './routes/useritems';
 import { createRouter as createCompletionsRouter } from './routes/completions';
+import { createRouter as createGoalsRouter } from './routes/goals';
 import { config } from './config';
 import { createAppContext } from './context';
 import { createUserActivityTracker } from './middleware/trackUserActivity';
@@ -119,6 +121,7 @@ createAppContext().then((ctx) => {
   app.use('/collections', createCollectionsRouter(ctx));
   app.use('/media', createMediaRouter(ctx));
   app.use('/admin', createAdminRouter(ctx));
+  app.use('/analytics', createAnalyticsRouter(ctx));
   app.use('/feedback', createFeedbackRouter(ctx));
   app.use('/feed', createFeedRouter(ctx));
   app.use('/share', createShareRouter(ctx));
@@ -131,6 +134,7 @@ createAppContext().then((ctx) => {
   app.use('/notifications', createNotificationsRouter(ctx));
   app.use('/useritems', createUseritemsRouter(ctx));
   app.use('/completions', createCompletionsRouter(ctx));
+  app.use('/goals', createGoalsRouter(ctx));
 
   // Root route
   app.get('/', (_req, res) => {

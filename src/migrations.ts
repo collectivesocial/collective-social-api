@@ -512,6 +512,135 @@ for (let i = 2; i <= 25; i++) {
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 026: Analytics tables + feed_events eventType column
+// ────────────────────────────────────────────────────────────────────────────
+migrations['026'] = {
+  async up(db: Kysely<unknown>) {
+    // ── User activity log (one row per user per day for retention & WAU)
+    await db.schema
+      .createTable('user_activity_log')
+      .addColumn('did', 'varchar', (col) => col.notNull())
+      .addColumn('activity_date', 'date', (col) => col.notNull())
+      .addColumn('activity_count', 'integer', (col) => col.notNull().defaultTo(1))
+      .addUniqueConstraint('user_activity_log_did_date_unique', [
+        'did',
+        'activity_date',
+      ])
+      .execute();
+
+    await db.schema
+      .createIndex('user_activity_log_date_idx')
+      .on('user_activity_log')
+      .column('activity_date')
+      .execute();
+
+    await db.schema
+      .createIndex('user_activity_log_did_idx')
+      .on('user_activity_log')
+      .column('did')
+      .execute();
+
+    // ── Bluesky share events (tracks intent-to-share clicks)
+    await db.schema
+      .createTable('bluesky_share_events')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('userDid', 'varchar', (col) => col.notNull())
+      .addColumn('shareType', 'varchar(50)', (col) => col.notNull())
+      .addColumn('shareTargetId', 'varchar')
+      .addColumn('createdAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    await db.schema
+      .createIndex('bluesky_share_events_created_at_idx')
+      .on('bluesky_share_events')
+      .column('createdAt')
+      .execute();
+
+    await db.schema
+      .createIndex('bluesky_share_events_user_did_idx')
+      .on('bluesky_share_events')
+      .column('userDid')
+      .execute();
+
+    // ── Add eventType column to feed_events for structured querying
+    await db.schema
+      .alterTable('feed_events')
+      .addColumn('eventType', 'varchar(50)')
+      .execute();
+
+    await db.schema
+      .createIndex('feed_events_event_type_idx')
+      .on('feed_events')
+      .column('eventType')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .dropIndex('feed_events_event_type_idx')
+      .ifExists()
+      .execute();
+    await db.schema
+      .alterTable('feed_events')
+      .dropColumn('eventType')
+      .execute();
+    await db.schema.dropTable('bluesky_share_events').ifExists().execute();
+    await db.schema.dropTable('user_activity_log').ifExists().execute();
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 027: Goals table + goalUri column on share_links
+// ────────────────────────────────────────────────────────────────────────────
+migrations['027'] = {
+  async up(db: Kysely<unknown>) {
+    // ── Goals index table (caches ATProto goal records for aggregation)
+    await db.schema
+      .createTable('goals')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar', (col) => col.notNull().unique())
+      .addColumn('authorDid', 'varchar', (col) => col.notNull())
+      .addColumn('title', 'varchar', (col) => col.notNull())
+      .addColumn('mediaType', 'varchar(64)')
+      .addColumn('targetCount', 'integer', (col) => col.notNull())
+      .addColumn('startDate', 'timestamptz', (col) => col.notNull())
+      .addColumn('endDate', 'timestamptz', (col) => col.notNull())
+      .addColumn('visibility', 'varchar(32)', (col) =>
+        col.notNull().defaultTo('public')
+      )
+      .addColumn('cachedCompletedCount', 'integer', (col) =>
+        col.notNull().defaultTo(0)
+      )
+      .addColumn('createdAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    await db.schema
+      .createIndex('goals_author_did_idx')
+      .on('goals')
+      .column('authorDid')
+      .execute();
+
+    // ── Add goalUri column to share_links for goal sharing
+    await db.schema
+      .alterTable('share_links')
+      .addColumn('goalUri', 'varchar')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('share_links')
+      .dropColumn('goalUri')
+      .execute();
+    await db.schema.dropTable('goals').ifExists().execute();
+  },
+};
+
 export { migrations, migrationProvider };
 
 export const migrateToLatest = async (db: Kysely<any>) => {
