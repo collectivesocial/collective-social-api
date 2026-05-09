@@ -307,7 +307,9 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listItemUri = decodeURIComponent(req.params.listItemUri as string);
+        const listItemUri = decodeURIComponent(
+          req.params.listItemUri as string
+        );
 
         // Get all review segments from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({

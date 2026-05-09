@@ -139,7 +139,9 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const completionUri = decodeURIComponent(req.params.completionUri as string);
+      const completionUri = decodeURIComponent(
+        req.params.completionUri as string
+      );
       const rkeyMatch = completionUri.match(/\/([^\/]+)$/);
       if (!rkeyMatch) {
         return res.status(400).json({ error: 'Invalid completion URI' });

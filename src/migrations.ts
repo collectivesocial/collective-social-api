@@ -522,7 +522,9 @@ migrations['026'] = {
       .createTable('user_activity_log')
       .addColumn('did', 'varchar', (col) => col.notNull())
       .addColumn('activity_date', 'date', (col) => col.notNull())
-      .addColumn('activity_count', 'integer', (col) => col.notNull().defaultTo(1))
+      .addColumn('activity_count', 'integer', (col) =>
+        col.notNull().defaultTo(1)
+      )
       .addUniqueConstraint('user_activity_log_did_date_unique', [
         'did',
         'activity_date',
@@ -583,10 +585,7 @@ migrations['026'] = {
       .dropIndex('feed_events_event_type_idx')
       .ifExists()
       .execute();
-    await db.schema
-      .alterTable('feed_events')
-      .dropColumn('eventType')
-      .execute();
+    await db.schema.alterTable('feed_events').dropColumn('eventType').execute();
     await db.schema.dropTable('bluesky_share_events').ifExists().execute();
     await db.schema.dropTable('user_activity_log').ifExists().execute();
   },
@@ -633,10 +632,7 @@ migrations['027'] = {
   },
 
   async down(db: Kysely<unknown>) {
-    await db.schema
-      .alterTable('share_links')
-      .dropColumn('goalUri')
-      .execute();
+    await db.schema.alterTable('share_links').dropColumn('goalUri').execute();
     await db.schema.dropTable('goals').ifExists().execute();
   },
 };
