@@ -261,11 +261,9 @@ export const createRouter = (ctx: AppContext) => {
         !shareType ||
         !['item', 'collection', 'review', 'goal'].includes(shareType)
       ) {
-        return res
-          .status(400)
-          .json({
-            error: 'shareType must be item, collection, review, or goal',
-          });
+        return res.status(400).json({
+          error: 'shareType must be item, collection, review, or goal',
+        });
       }
 
       try {
