@@ -16,6 +16,7 @@ import { createRouter as createCommentsRouter } from './routes/comments';
 import { createRouter as createReactionsRouter } from './routes/reactions';
 import { createRouter as createGroupsRouter } from './routes/groups';
 import { createRouter as createGroupContentRouter } from './routes/groupContent';
+import { createRouter as createGroupEventsRouter } from './routes/groupEvents';
 import { createRouter as createNotificationsRouter } from './routes/notifications';
 import { createRouter as createUseritemsRouter } from './routes/useritems';
 import { createRouter as createCompletionsRouter } from './routes/completions';
@@ -158,6 +159,7 @@ createAppContext().then((ctx) => {
   app.use('/reactions', createReactionsRouter(ctx));
   app.use('/groups', createGroupsRouter(ctx));
   app.use('/groups/:communityDid', createGroupContentRouter(ctx));
+  app.use('/groups/:communityDid/events', createGroupEventsRouter(ctx));
   app.use('/notifications', createNotificationsRouter(ctx));
   app.use('/useritems', createUseritemsRouter(ctx));
   app.use('/completions', createCompletionsRouter(ctx));

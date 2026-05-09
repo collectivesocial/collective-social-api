@@ -63,7 +63,9 @@ export const createRouter = (ctx: AppContext) => {
           updatedAt: now,
         };
 
-        // If we have a reviewUri, try to fetch the review to get its CID
+        // If we have a reviewUri, fetch the review to get its CID for the strongRef.
+        // A strongRef requires both uri and cid; if we cannot obtain the real CID we
+        // must not proceed — using a fake CID would break tamper-evidence guarantees.
         if (reviewUri && record.reviewRef) {
           try {
             const uriParts = reviewUri.split('/');
@@ -78,17 +80,19 @@ export const createRouter = (ctx: AppContext) => {
 
             record.reviewRef.cid = reviewRecord.data.cid as string;
           } catch (err) {
-            // If review doesn't exist in AT Protocol, use a placeholder CID
-            // The comment will still be stored in our database
-            ctx.logger.warn(
+            ctx.logger.error(
               { err, reviewUri },
-              'Could not fetch review CID, using placeholder'
+              'Could not fetch review CID; cannot create valid strongRef — aborting comment creation'
             );
-            record.reviewRef.cid = 'bafyreib2rxk3rh6kzwq';
+            return res.status(502).json({
+              error:
+                'Could not fetch the referenced review record. The review may have been deleted or is temporarily unavailable. Please try again.',
+            });
           }
         }
 
-        // If we have a parentCommentUri, try to fetch the parent comment to get its CID
+        // If we have a parentCommentUri, fetch its CID for the strongRef.
+        // Same rule: no real CID → no write.
         if (parentCommentUri && record.parentCommentRef) {
           try {
             const uriParts = parentCommentUri.split('/');
@@ -103,12 +107,14 @@ export const createRouter = (ctx: AppContext) => {
 
             record.parentCommentRef.cid = parentRecord.data.cid as string;
           } catch (err) {
-            // If parent comment doesn't exist in AT Protocol, use a placeholder CID
-            ctx.logger.warn(
+            ctx.logger.error(
               { err, parentCommentUri },
-              'Could not fetch parent comment CID, using placeholder'
+              'Could not fetch parent comment CID; cannot create valid strongRef — aborting comment creation'
             );
-            record.parentCommentRef.cid = 'bafyreib2rxk3rh6kzwq';
+            return res.status(502).json({
+              error:
+                'Could not fetch the referenced parent comment. It may have been deleted or is temporarily unavailable. Please try again.',
+            });
           }
         }
 

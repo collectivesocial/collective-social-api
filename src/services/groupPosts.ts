@@ -65,9 +65,12 @@ export async function createGroupPost(
     record: postRecord as any,
   });
 
-  // 2. Create index entry in community repo
+  // 2. Create index entry in community repo with a strongRef (post.uri + post.cid)
   const indexRecord = {
-    postUri: postResponse.data.uri,
+    post: {
+      uri: postResponse.data.uri,
+      cid: postResponse.data.cid,
+    },
     authorDid: userDid,
     segmentUri: data.segmentUri || undefined,
     listItemUri: data.listItemUri || undefined,
@@ -118,7 +121,7 @@ export async function fetchGroupPosts(
   await Promise.all(
     relevantIndexes.map(async (idx: any) => {
       try {
-        const postUri = idx.value.postUri;
+        const postUri = idx.value.post.uri;
         const match = postUri.match(/at:\/\/([^\/]+)\/([^\/]+)\/(.+)/);
         if (!match) return;
 
@@ -136,7 +139,7 @@ export async function fetchGroupPosts(
           authorDid: ownerDid,
         });
       } catch (err) {
-        console.warn(`Failed to fetch post ${idx.value.postUri}:`, err);
+        console.warn(`Failed to fetch post ${idx.value.post?.uri}:`, err);
         // Post may be deleted or repo unavailable - skip it
       }
     })
@@ -211,11 +214,15 @@ export function buildThreads(posts: GroupPost[]): GroupPost[] {
 }
 
 /**
- * Delete a post (user-initiated)
+ * Delete a post (user-initiated).
+ * Removes the post from the user's personal repo and cleans up the orphaned
+ * postindex pointer in the community repo (A.4).
  */
 export async function deleteGroupPost(
   agent: Agent,
-  postUri: string
+  postUri: string,
+  communityDid: string,
+  userDid: string
 ): Promise<void> {
   const match = postUri.match(/at:\/\/([^\/]+)\/([^\/]+)\/(.+)/);
   if (!match) throw new Error('Invalid post URI');
@@ -226,11 +233,42 @@ export async function deleteGroupPost(
     throw new Error('You can only delete your own posts');
   }
 
+  // 1. Delete from user's personal PDS
   await agent.api.com.atproto.repo.deleteRecord({
     repo: agent.did!,
     collection: collection,
     rkey: rkey,
   });
+
+  // 2. Find and delete the postindex pointer from the community repo
+  try {
+    const allIndexes = await opensocial.listAllCommunityRecords(
+      communityDid,
+      COL_POST_INDEX
+    );
+    const indexEntry = allIndexes.find(
+      (idx: any) => idx.value.post?.uri === postUri
+    );
+    if (indexEntry) {
+      const indexRkey = indexEntry.uri.split('/').pop()!;
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_POST_INDEX,
+        indexRkey
+      );
+    }
+  } catch (err) {
+    // Pass postUri as structured data rather than interpolating into the message
+    // to avoid CodeQL CWE-134 (externally-controlled format string).
+    console.warn(
+      'Failed to clean up postindex — pointer may be orphaned:',
+      { postUri },
+      err
+    );
+    // Non-fatal: the user-PDS record is already gone; the stale pointer will
+    // be silently skipped by fetchGroupPosts (getRecord will 404 and be dropped).
+  }
 }
 
 /**
@@ -248,7 +286,7 @@ export async function adminDeleteGroupPost(
   );
 
   const indexEntry = allIndexes.find(
-    (idx: any) => idx.value.postUri === postUri
+    (idx: any) => idx.value.post?.uri === postUri
   );
   if (!indexEntry) {
     throw new Error('Post index not found');
