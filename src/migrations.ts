@@ -641,6 +641,55 @@ migrations['027'] = {
   },
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 028: event_rsvps table for Events V1
+// Events live on the group PDS (community.lexicon.calendar.event).
+// RSVPs live on each user's PDS (community.lexicon.calendar.rsvp).
+// This table caches RSVPs for aggregation (counts, attendee lists).
+// ────────────────────────────────────────────────────────────────────────────
+migrations['028'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('event_rsvps')
+      .addColumn('event_uri', 'text', (col) => col.notNull())
+      .addColumn('event_cid', 'text', (col) => col.notNull())
+      .addColumn('community_did', 'text', (col) => col.notNull())
+      .addColumn('user_did', 'text', (col) => col.notNull())
+      .addColumn('rsvp_uri', 'text', (col) => col.notNull())
+      .addColumn('status', 'varchar(16)', (col) => col.notNull())
+      .addColumn('rsvp_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addColumn('updated_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addPrimaryKeyConstraint('event_rsvps_pkey', ['event_uri', 'user_did'])
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_event_uri_idx')
+      .on('event_rsvps')
+      .column('event_uri')
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_community_did_idx')
+      .on('event_rsvps')
+      .column('community_did')
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_user_did_idx')
+      .on('event_rsvps')
+      .column('user_did')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('event_rsvps').ifExists().execute();
+  },
+};
+
 export { migrations, migrationProvider };
 
 export const migrateToLatest = async (db: Kysely<any>) => {

@@ -530,6 +530,14 @@ export async function resolveUserPermissions(
       u: 'member',
       d: 'member',
     },
+    // Events are created/updated/deleted by admins; all members can read.
+    // RSVPs are user-PDS records and are NOT in DEFAULTS (OpenSocial is not in that path).
+    'community.lexicon.calendar.event': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
   };
 
   const result: Record<string, ResolvedCollectionPermission> = {};
