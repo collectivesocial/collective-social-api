@@ -686,6 +686,32 @@ migrations['028'] = {
   },
 };
 
+// Migration 029: widen event_rsvps.status from VARCHAR(16) to TEXT
+// ────────────────────────────────────────────────────────────────────────────
+// Root cause: RSVP status values are full NSID tokens like
+//   "community.lexicon.calendar.rsvp#going"   (38 chars)
+// which overflows the original VARCHAR(16) cap, causing Postgres to throw
+// "value too long for type character varying(16)" on every RSVP write.
+// TEXT has no length cap in Postgres and is the correct type for this column.
+//
+// Down migration note: reverting to VARCHAR(16) will FAIL if any existing row
+// holds a value longer than 16 characters. Treat this as a one-way migration
+// in production unless the table is first truncated.
+migrations['029'] = {
+  async up(db: Kysely<unknown>) {
+    await sql`ALTER TABLE event_rsvps ALTER COLUMN status TYPE TEXT`.execute(
+      db
+    );
+  },
+
+  async down(db: Kysely<unknown>) {
+    // WARNING: this will fail if any row.status is longer than 16 characters.
+    await sql`ALTER TABLE event_rsvps ALTER COLUMN status TYPE VARCHAR(16)`.execute(
+      db
+    );
+  },
+};
+
 export { migrations, migrationProvider };
 
 export const migrateToLatest = async (db: Kysely<any>) => {
