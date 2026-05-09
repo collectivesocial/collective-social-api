@@ -5,9 +5,9 @@ import { z } from 'zod';
 export type JsonWebKey = Jwk & { kid: string };
 
 const jsonWebKeySchema = z.intersection(
-  jwkValidator,
+  jwkValidator as unknown as z.ZodTypeAny,
   z.object({ kid: z.string().nonempty() })
-) satisfies z.ZodType<JsonWebKey>;
+) as z.ZodType<JsonWebKey>;
 
 const jsonWebKeysSchema = z.array(jsonWebKeySchema).nonempty();
 
