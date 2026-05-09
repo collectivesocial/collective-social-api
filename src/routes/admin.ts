@@ -1,34 +1,8 @@
 import express, { Request, Response } from 'express';
-import { getIronSession } from 'iron-session';
 import type { AppContext } from '../context';
-import { config } from '../config';
 import { handler } from '../lib/http';
-import { Agent } from '@atproto/api';
 import { fetchUserHandles } from '../lib/users';
-
-type Session = { did?: string };
-
-// Helper function to get the authenticated user's session
-async function getSessionAgent(
-  req: express.Request,
-  res: express.Response,
-  ctx: AppContext
-) {
-  res.setHeader('Vary', 'Cookie');
-
-  const session = await getIronSession<Session>(req, res, {
-    cookieName: 'sid',
-    password: config.cookieSecret,
-    cookieOptions: {
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      httpOnly: true,
-      path: '/',
-    },
-  });
-
-  return session.did || null;
-}
+import { getSessionAgent } from '../auth/agent';
 
 // Middleware to check if user is admin
 async function requireAdmin(
@@ -36,9 +10,9 @@ async function requireAdmin(
   res: express.Response,
   ctx: AppContext
 ): Promise<boolean> {
-  const did = await getSessionAgent(req, res, ctx);
+  const agent = await getSessionAgent(req, res, ctx);
 
-  if (!did) {
+  if (!agent?.did) {
     res.status(401).json({ error: 'Not authenticated' });
     return false;
   }
@@ -46,7 +20,7 @@ async function requireAdmin(
   const user = await ctx.db
     .selectFrom('users')
     .select(['isAdmin'])
-    .where('did', '=', did)
+    .where('did', '=', agent.did)
     .executeTakeFirst();
 
   if (!user?.isAdmin) {
@@ -94,23 +68,18 @@ export const createRouter = (ctx: AppContext) => {
           .execute();
 
         // Get admin agent for fetching user handles
-        const sessionDid = await getSessionAgent(req, res, ctx);
+        const adminAgent = await getSessionAgent(req, res, ctx);
         let userHandles = new Map<string, string>();
 
-        if (sessionDid) {
+        if (adminAgent) {
           try {
-            const oauthSession = await ctx.oauthClient.restore(sessionDid);
-            if (oauthSession) {
-              const adminAgent = new Agent(oauthSession);
-
-              // Fetch user handles
-              const userDids = users.map((user) => user.did);
-              userHandles = await fetchUserHandles(
-                adminAgent,
-                userDids,
-                ctx.logger
-              );
-            }
+            // Fetch user handles
+            const userDids = users.map((user) => user.did);
+            userHandles = await fetchUserHandles(
+              adminAgent,
+              userDids,
+              ctx.logger
+            );
           } catch (err) {
             ctx.logger.error(
               { err },
@@ -272,27 +241,20 @@ export const createRouter = (ctx: AppContext) => {
         const origin = req.get('origin') || 'http://127.0.0.1:5173';
 
         // Get admin agent for fetching user handles and collection names
-        const sessionDid = await getSessionAgent(req, res, ctx);
+        const adminAgentForCollections = await getSessionAgent(req, res, ctx);
         let userHandles = new Map<string, string>();
-        let adminAgentForCollections: Agent | null = null;
 
-        if (sessionDid) {
+        if (adminAgentForCollections) {
           try {
-            const oauthSession = await ctx.oauthClient.restore(sessionDid);
-            if (oauthSession) {
-              const adminAgent = new Agent(oauthSession);
-              adminAgentForCollections = adminAgent;
-
-              // Fetch user handles
-              const uniqueUserDids = [
-                ...new Set(shareLinks.map((link) => link.userDid)),
-              ];
-              userHandles = await fetchUserHandles(
-                adminAgent,
-                uniqueUserDids,
-                ctx.logger
-              );
-            }
+            // Fetch user handles
+            const uniqueUserDids = [
+              ...new Set(shareLinks.map((link) => link.userDid)),
+            ];
+            userHandles = await fetchUserHandles(
+              adminAgentForCollections,
+              uniqueUserDids,
+              ctx.logger
+            );
           } catch (err) {
             ctx.logger.error(
               { err },
@@ -425,16 +387,16 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
 
-      const did = await getSessionAgent(req, res, ctx);
+      const agent = await getSessionAgent(req, res, ctx);
 
-      if (!did) {
+      if (!agent?.did) {
         return res.json({ isAdmin: false });
       }
 
       const user = await ctx.db
         .selectFrom('users')
         .select(['isAdmin'])
-        .where('did', '=', did)
+        .where('did', '=', agent.did)
         .executeTakeFirst();
 
       res.json({ isAdmin: user?.isAdmin || false });

@@ -13,7 +13,11 @@
 import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
-import { requireGroupMember, GroupAuthRequest } from '../middleware/groupAuth';
+import {
+  requireGroupMember,
+  requireGroupAdmin,
+  GroupAuthRequest,
+} from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri } from '../services/opensocial';
 import type { PdsRecord } from '../services/opensocial';
@@ -43,6 +47,7 @@ export const createRouter = (ctx: AppContext) => {
   // Fine-grained permission enforcement (member vs admin per collection)
   // is handled by open-social when the record write is proxied.
   const memberOnly = requireGroupMember(ctx);
+  const adminOnly = requireGroupAdmin(ctx);
 
   // ═══════════════════════════════════════════════════════════════
   // LISTS
@@ -422,13 +427,13 @@ export const createRouter = (ctx: AppContext) => {
 
   /**
    * PUT /groups/:communityDid/items/:rkey/status
-   * Set the group status of a list item. Admin only.
+   * Admin only — sets the GROUP's shared status for a list item.
    *
    * Body: { status: 'not-started' | 'in-progress' | 'completed' }
    */
   router.put(
     '/items/:rkey/status',
-    memberOnly,
+    adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const rkey = req.params.rkey as string;
@@ -1012,6 +1017,7 @@ export const createRouter = (ctx: AppContext) => {
             memberDid: userDid,
             completed: true,
             completedAt: now,
+            createdAt: now,
           }
         );
       } catch (err: any) {

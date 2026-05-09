@@ -10,6 +10,7 @@ import assert from 'node:assert';
 import type { Database } from '../db';
 import { config } from '../config';
 import { SessionStore, StateStore } from './storage';
+import { COLLECTIVE_SCOPES } from './scopes';
 
 export async function createOAuthClient(db: Database) {
   // Confidential client require a keyset accessible on the internet. Non
@@ -42,7 +43,7 @@ export async function createOAuthClient(db: Database) {
         client_id: `${config.serviceUrl}/oauth-client-metadata.json`,
         jwks_uri: `${config.serviceUrl}/.well-known/jwks.json`,
         redirect_uris: [`${config.serviceUrl}/oauth/callback`],
-        scope: 'atproto transition:generic',
+        scope: COLLECTIVE_SCOPES,
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         application_type: 'web',
@@ -53,7 +54,7 @@ export async function createOAuthClient(db: Database) {
     : atprotoLoopbackClientMetadata(
         `http://localhost?${new URLSearchParams([
           ['redirect_uri', `http://127.0.0.1:${config.port}/oauth/callback`],
-          ['scope', `atproto transition:generic`],
+          ['scope', COLLECTIVE_SCOPES],
         ])}`
       );
 
@@ -63,6 +64,8 @@ export async function createOAuthClient(db: Database) {
     stateStore: new StateStore(db),
     sessionStore: new SessionStore(db),
     plcDirectoryUrl: config.plcUrl,
-    handleResolver: config.pdsUrl,
+    // No handleResolver override — default AtprotoHandleResolverNode resolves
+    // handles via DNS TXT records and HTTP well-known, supporting any PDS.
+    allowHttp: config.nodeEnv === 'development',
   });
 }

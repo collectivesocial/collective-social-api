@@ -11,6 +11,7 @@ import { config } from '../config';
 import { handler } from '../lib/http';
 import { ifString } from '../lib/stringUtil';
 import { SESSION_OPTIONS, Session } from '../auth/session';
+import { COLLECTIVE_SCOPES } from '../auth/scopes';
 
 // Max age, in seconds, for static routes and assets
 const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
@@ -73,16 +74,11 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       const params = new URLSearchParams(req.originalUrl.split('?')[1]);
       try {
         // Load the session cookie
-        const session = await getIronSession<Session>(req, res, {
-          cookieName: 'sid',
-          password: config.cookieSecret,
-          cookieOptions: {
-            secure: config.nodeEnv === 'production',
-            sameSite: 'lax',
-            httpOnly: true,
-            path: '/',
-          },
-        });
+        const session = await getIronSession<Session>(
+          req,
+          res,
+          SESSION_OPTIONS
+        );
 
         // If the user is already signed in, destroy the old credentials
         if (session.did) {
@@ -129,7 +125,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
 
         // Initiate the OAuth flow
         const url = await ctx.oauthClient.authorize(input, {
-          scope: 'atproto transition:generic',
+          scope: COLLECTIVE_SCOPES,
         });
 
         res.redirect(url.toString());
@@ -152,7 +148,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       try {
         const service = config.pdsUrl;
         const url = await ctx.oauthClient.authorize(service, {
-          scope: 'atproto transition:generic',
+          scope: COLLECTIVE_SCOPES,
         });
         res.redirect(url.toString());
       } catch (err) {
@@ -174,16 +170,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       // Never store this route
       res.setHeader('cache-control', 'no-store');
 
-      const session = await getIronSession<Session>(req, res, {
-        cookieName: 'sid',
-        password: config.cookieSecret,
-        cookieOptions: {
-          secure: config.nodeEnv === 'production',
-          sameSite: 'lax',
-          httpOnly: true,
-          path: '/',
-        },
-      });
+      const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
 
       // Revoke credentials on the server
       if (session.did) {
