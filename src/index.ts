@@ -36,7 +36,9 @@ app.use(
   cors({
     origin:
       config.nodeEnv === 'production'
-        ? (config.corsOrigin ? [config.corsOrigin] : [])
+        ? config.corsOrigin
+          ? [config.corsOrigin]
+          : []
         : ['http://127.0.0.1:5173', 'http://localhost:5173'],
     credentials: true,
   })
@@ -76,21 +78,25 @@ app.use((req, _res, next) => {
         const collection = decodeURIComponent(segments[1]);
         const rkey = decodeURIComponent(segments[2]);
         const atUri = `at://${did}/${collection}/${rkey}`;
-        const suffix = segments.length > 3 ? '/' + segments.slice(3).join('/') : '';
+        const suffix =
+          segments.length > 3 ? '/' + segments.slice(3).join('/') : '';
 
         // Recursively handle a second AT URI in the suffix (e.g. /items/:itemUri)
         let processedSuffix = suffix;
         const innerMatch = suffix.match(/\/at(?:%3A|:)\/{1,2}/i);
         if (innerMatch && innerMatch.index !== undefined) {
           const sPre = suffix.substring(0, innerMatch.index + 1);
-          const sAfterAt = suffix.substring(innerMatch.index + innerMatch[0].length);
+          const sAfterAt = suffix.substring(
+            innerMatch.index + innerMatch[0].length
+          );
           const innerSegs = sAfterAt.split('/');
           if (innerSegs.length >= 3) {
             const iDid = decodeURIComponent(innerSegs[0]);
             const iCol = decodeURIComponent(innerSegs[1]);
             const iRkey = decodeURIComponent(innerSegs[2]);
             const innerAtUri = `at://${iDid}/${iCol}/${iRkey}`;
-            const iSuffix = innerSegs.length > 3 ? '/' + innerSegs.slice(3).join('/') : '';
+            const iSuffix =
+              innerSegs.length > 3 ? '/' + innerSegs.slice(3).join('/') : '';
             processedSuffix = sPre + encodeURIComponent(innerAtUri) + iSuffix;
           }
         }
@@ -105,6 +111,27 @@ app.use((req, _res, next) => {
 // Health check — available before context initialization
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+// CIMD document — serves the public key for HTTP Message Signatures verification
+app.get('/.well-known/client-metadata.json', async (_req, res) => {
+  try {
+    if (!config.openSocialSigningKey) {
+      return res.status(404).json({ error: 'CIMD not configured' });
+    }
+    const { publicKeyToJwk } = await import('./lib/httpSigning');
+    const jwk = publicKeyToJwk(
+      config.openSocialSigningKey,
+      (config.openSocialKeyAlgorithm || 'ed25519') as any
+    );
+    res.json({
+      client_id: config.serviceUrl || `http://localhost:${config.port}`,
+      client_name: 'Collective Social',
+      jwks: { keys: [jwk] },
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to generate CIMD document' });
+  }
 });
 
 // Initialize app context and routes

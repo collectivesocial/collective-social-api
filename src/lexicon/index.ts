@@ -19,6 +19,9 @@ export class Server {
   xrpc: XrpcServer;
 
   constructor(options?: XrpcOptions) {
-    this.xrpc = createXrpcServer(schemas, options);
+    this.xrpc = createXrpcServer(
+      schemas as Parameters<typeof createXrpcServer>[0],
+      options
+    );
   }
 }

@@ -22,12 +22,16 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { mediaItemId, mediaType, collectionUri, reviewId, goalUri } = req.body;
+      const { mediaItemId, mediaType, collectionUri, reviewId, goalUri } =
+        req.body;
 
       // Validate: must provide either media item, collection, review, or goal, not multiple
-      const providedTypes = [mediaItemId, collectionUri, reviewId, goalUri].filter(
-        Boolean
-      ).length;
+      const providedTypes = [
+        mediaItemId,
+        collectionUri,
+        reviewId,
+        goalUri,
+      ].filter(Boolean).length;
       if (providedTypes === 0) {
         return res.status(400).json({
           error:
@@ -257,9 +261,9 @@ export const createRouter = (ctx: AppContext) => {
         !shareType ||
         !['item', 'collection', 'review', 'goal'].includes(shareType)
       ) {
-        return res
-          .status(400)
-          .json({ error: 'shareType must be item, collection, review, or goal' });
+        return res.status(400).json({
+          error: 'shareType must be item, collection, review, or goal',
+        });
       }
 
       try {
@@ -431,14 +435,31 @@ export const createRouter = (ctx: AppContext) => {
           // Fetch goal details for Open Graph tags
           const goal = await ctx.db
             .selectFrom('goals')
-            .select(['title', 'mediaType', 'targetCount', 'cachedCompletedCount', 'startDate', 'endDate'])
+            .select([
+              'title',
+              'mediaType',
+              'targetCount',
+              'cachedCompletedCount',
+              'startDate',
+              'endDate',
+            ])
             .where('uri', '=', shareLink.goalUri)
             .executeTakeFirst();
 
           if (goal) {
-            const pct = Math.min(100, Math.round((goal.cachedCompletedCount / goal.targetCount) * 100));
+            const pct = Math.min(
+              100,
+              Math.round((goal.cachedCompletedCount / goal.targetCount) * 100)
+            );
             const mediaLabel = goal.mediaType || 'items';
-            const emoji = goal.mediaType === 'book' ? '📚' : goal.mediaType === 'movie' ? '🎬' : goal.mediaType === 'tv' ? '📺' : '🎯';
+            const emoji =
+              goal.mediaType === 'book'
+                ? '📚'
+                : goal.mediaType === 'movie'
+                  ? '🎬'
+                  : goal.mediaType === 'tv'
+                    ? '📺'
+                    : '🎯';
             title = escapeHtml(`${emoji} ${goal.title}`);
             description = escapeHtml(
               `${goal.cachedCompletedCount} of ${goal.targetCount} ${mediaLabel} completed (${pct}%)`
