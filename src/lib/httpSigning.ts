@@ -99,7 +99,10 @@ function signWithKey(data: string, config: SigningConfig): Buffer {
 /**
  * Export the public key from a private key as JWK (for CIMD document).
  */
-export function publicKeyToJwk(privateKeyPem: string, algorithm: SigningConfig['algorithm']): crypto.JsonWebKey {
+export function publicKeyToJwk(
+  privateKeyPem: string,
+  algorithm: SigningConfig['algorithm']
+): crypto.JsonWebKey {
   const keyObj = crypto.createPublicKey(privateKeyPem);
   const jwk = keyObj.export({ format: 'jwk' });
 

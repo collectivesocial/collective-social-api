@@ -20,7 +20,8 @@ if (config.openSocialSigningKey) {
   signingConfig = {
     privateKey: config.openSocialSigningKey,
     keyId: config.openSocialKeyId || 'collective-social-key-1',
-    algorithm: (config.openSocialKeyAlgorithm || 'ed25519') as SigningConfig['algorithm'],
+    algorithm: (config.openSocialKeyAlgorithm ||
+      'ed25519') as SigningConfig['algorithm'],
   };
 }
 
