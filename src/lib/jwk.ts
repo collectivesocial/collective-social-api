@@ -4,10 +4,11 @@ import { z } from 'zod';
 
 export type JsonWebKey = Jwk & { kid: string };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const jsonWebKeySchema = z.intersection(
-  jwkValidator as unknown as z.ZodTypeAny,
+  jwkValidator as any,
   z.object({ kid: z.string().nonempty() })
-) as z.ZodType<JsonWebKey>;
+) as unknown as z.ZodType<JsonWebKey>;
 
 const jsonWebKeysSchema = z.array(jsonWebKeySchema).nonempty();
 
