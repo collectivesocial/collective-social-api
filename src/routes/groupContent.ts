@@ -13,7 +13,11 @@
 import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
-import { requireGroupMember, requireGroupAdmin, GroupAuthRequest } from '../middleware/groupAuth';
+import {
+  requireGroupMember,
+  requireGroupAdmin,
+  GroupAuthRequest,
+} from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri } from '../services/opensocial';
 import type { PdsRecord } from '../services/opensocial';
@@ -945,7 +949,11 @@ export const createRouter = (ctx: AppContext) => {
           collection: COL_SEGMENT_PROGRESS_USER,
           rkey: segmentRkey,
         });
-        progress = { uri: rec.data.uri, rkey: segmentRkey, ...(rec.data.value as object) };
+        progress = {
+          uri: rec.data.uri,
+          rkey: segmentRkey,
+          ...(rec.data.value as object),
+        };
       } catch {
         // No progress record yet
       }
@@ -1027,8 +1035,13 @@ export const createRouter = (ctx: AppContext) => {
           record: progressRecord as any,
         });
       } catch (err: any) {
-        ctx.logger.error({ err }, 'Failed to write segment progress to user PDS');
-        return res.status(500).json({ error: 'Failed to create progress record' });
+        ctx.logger.error(
+          { err },
+          'Failed to write segment progress to user PDS'
+        );
+        return res
+          .status(500)
+          .json({ error: 'Failed to create progress record' });
       }
 
       // ── Sync to personal progress ──────────────────────────────
@@ -1061,7 +1074,10 @@ export const createRouter = (ctx: AppContext) => {
                 headers: { 'Content-Type': 'application/json', Cookie: cookie },
                 body: JSON.stringify(syncBody),
               }).catch((err) => {
-                ctx.logger.warn({ err }, 'Failed to sync personal review segment');
+                ctx.logger.warn(
+                  { err },
+                  'Failed to sync personal review segment'
+                );
               });
 
               await fetch(`${baseUrl}/collections/quick-add`, {
@@ -1122,8 +1138,13 @@ export const createRouter = (ctx: AppContext) => {
           rkey: segmentRkey,
         });
       } catch (err: any) {
-        ctx.logger.error({ err }, 'Failed to delete segment progress from user PDS');
-        return res.status(500).json({ error: 'Failed to delete progress record' });
+        ctx.logger.error(
+          { err },
+          'Failed to delete segment progress from user PDS'
+        );
+        return res
+          .status(500)
+          .json({ error: 'Failed to delete progress record' });
       }
 
       return res.json({ success: true });
@@ -1367,7 +1388,12 @@ export const createRouter = (ctx: AppContext) => {
 
         if (authorDid === userDid) {
           // User deleting their own post — also cleans up the community postindex
-          await groupPostService.deleteGroupPost(agent, postUri, communityDid, userDid);
+          await groupPostService.deleteGroupPost(
+            agent,
+            postUri,
+            communityDid,
+            userDid
+          );
         } else if (isAdmin) {
           // Admin marking post as deleted
           await groupPostService.adminDeleteGroupPost(

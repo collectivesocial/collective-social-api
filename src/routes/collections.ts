@@ -485,7 +485,8 @@ export const createRouter = (ctx: AppContext) => {
                     record.value.order !== undefined ? record.value.order : 0,
                   mediaType: record.value.mediaType || null,
                   mediaItemId: record.value.mediaItemId || null,
-                  userItemUri: record.value.userItem || useritemData.uri || null,
+                  userItemUri:
+                    record.value.userItem || useritemData.uri || null,
                   // Enriched from useritem
                   status: useritemData.status || null,
                   rating: useritemData.rating ?? null,
@@ -524,7 +525,11 @@ export const createRouter = (ctx: AppContext) => {
                 return item;
               } catch (err) {
                 ctx.logger.warn(
-                  { err, uri: record.uri, mediaItemId: record.value?.mediaItemId },
+                  {
+                    err,
+                    uri: record.uri,
+                    mediaItemId: record.value?.mediaItemId,
+                  },
                   'Failed to enrich collection item, skipping'
                 );
                 return null;
@@ -533,7 +538,9 @@ export const createRouter = (ctx: AppContext) => {
         );
 
         // Filter out any items that failed to load
-        const items = itemResults.filter((item): item is NonNullable<typeof item> => item !== null);
+        const items = itemResults.filter(
+          (item): item is NonNullable<typeof item> => item !== null
+        );
 
         // Sort by order (descending - higher numbers first)
         items.sort((a, b) => (b.order || 0) - (a.order || 0));

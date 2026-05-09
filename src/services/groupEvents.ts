@@ -90,7 +90,6 @@ export async function createEvent(
   const now = new Date().toISOString();
 
   const record: Record<string, unknown> = {
-
     name: data.name,
     createdAt: now,
   };
@@ -120,7 +119,9 @@ export async function createEvent(
     startsAt: data.startsAt,
     endsAt: data.endsAt,
     mode: data.mode ? `${COL_EVENT}#${data.mode}` : undefined,
-    status: data.status ? `${COL_EVENT}#${data.status}` : `${COL_EVENT}#scheduled`,
+    status: data.status
+      ? `${COL_EVENT}#${data.status}`
+      : `${COL_EVENT}#scheduled`,
     locations: data.locations,
     uris: data.uris,
     createdAt: now,
@@ -131,7 +132,10 @@ export async function listEvents(
   communityDid: string,
   db: Kysely<any>
 ): Promise<Array<EventRecord & { rsvpCounts: Record<RsvpStatus, number> }>> {
-  const rawEvents = await opensocial.listAllCommunityRecords(communityDid, COL_EVENT);
+  const rawEvents = await opensocial.listAllCommunityRecords(
+    communityDid,
+    COL_EVENT
+  );
 
   // Batch fetch RSVP counts for all events
   const eventUris = rawEvents.map((e: any) => e.uri);
@@ -155,7 +159,11 @@ export async function listEvents(
 
   return rawEvents.map((e: any) => {
     const rkey = e.uri.split('/').at(-1)!;
-    const counts = countsByEvent[e.uri] ?? { going: 0, interested: 0, notgoing: 0 };
+    const counts = countsByEvent[e.uri] ?? {
+      going: 0,
+      interested: 0,
+      notgoing: 0,
+    };
     return {
       uri: e.uri,
       cid: e.cid,
@@ -173,7 +181,11 @@ export async function getEvent(
 ): Promise<(EventRecord & { rsvpCounts: Record<RsvpStatus, number> }) | null> {
   let record: any;
   try {
-    record = await opensocial.getCommunityRecord(communityDid, COL_EVENT, eventRkey);
+    record = await opensocial.getCommunityRecord(
+      communityDid,
+      COL_EVENT,
+      eventRkey
+    );
   } catch {
     return null;
   }
@@ -184,7 +196,11 @@ export async function getEvent(
     .where('event_uri', '=', record.uri)
     .execute();
 
-  const counts: Record<string, number> = { going: 0, interested: 0, notgoing: 0 };
+  const counts: Record<string, number> = {
+    going: 0,
+    interested: 0,
+    notgoing: 0,
+  };
   for (const row of rsvpRows) {
     const shortStatus = parseRsvpStatus(row.status);
     counts[shortStatus] = (counts[shortStatus] ?? 0) + 1;
@@ -214,7 +230,11 @@ export async function updateEvent(
     uris: EventRecord['uris'];
   }>
 ): Promise<EventRecord> {
-  const existing = await opensocial.getCommunityRecord(communityDid, COL_EVENT, eventRkey);
+  const existing = await opensocial.getCommunityRecord(
+    communityDid,
+    COL_EVENT,
+    eventRkey
+  );
   const merged: Record<string, unknown> = { ...(existing.value as object) };
 
   if (data.name !== undefined) merged.name = data.name;
@@ -250,10 +270,18 @@ export async function deleteEvent(
   db: Kysely<any>
 ): Promise<void> {
   // 1. Delete community PDS record
-  await opensocial.deleteCommunityRecord(communityDid, userDid, COL_EVENT, eventRkey);
+  await opensocial.deleteCommunityRecord(
+    communityDid,
+    userDid,
+    COL_EVENT,
+    eventRkey
+  );
 
   // 2. Cascade-delete RSVP cache rows
-  await db.deleteFrom('event_rsvps').where('event_uri', '=', eventUri).execute();
+  await db
+    .deleteFrom('event_rsvps')
+    .where('event_uri', '=', eventUri)
+    .execute();
 }
 
 // ─── RSVPs ─────────────────────────────────────────────────────────────────
@@ -299,13 +327,11 @@ export async function rsvpToEvent(
       updated_at: now,
     })
     .onConflict((oc: any) =>
-      oc
-        .columns(['event_uri', 'user_did'])
-        .doUpdateSet({
-          status: rsvpStatusToken(status),
-          rsvp_uri: response.data.uri,
-          updated_at: now,
-        })
+      oc.columns(['event_uri', 'user_did']).doUpdateSet({
+        status: rsvpStatusToken(status),
+        rsvp_uri: response.data.uri,
+        updated_at: now,
+      })
     )
     .execute();
 
@@ -350,7 +376,10 @@ export async function listRsvps(
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
 
-  let query = db.selectFrom('event_rsvps').selectAll().where('event_uri', '=', eventUri);
+  let query = db
+    .selectFrom('event_rsvps')
+    .selectAll()
+    .where('event_uri', '=', eventUri);
   let countQuery = db
     .selectFrom('event_rsvps')
     .select(({ fn }: any) => [fn.countAll().as('count')])

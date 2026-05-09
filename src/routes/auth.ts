@@ -74,7 +74,11 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       const params = new URLSearchParams(req.originalUrl.split('?')[1]);
       try {
         // Load the session cookie
-        const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
+        const session = await getIronSession<Session>(
+          req,
+          res,
+          SESSION_OPTIONS
+        );
 
         // If the user is already signed in, destroy the old credentials
         if (session.did) {

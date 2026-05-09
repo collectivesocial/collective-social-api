@@ -12,7 +12,11 @@
 import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
-import { requireGroupMember, requireGroupAdmin, GroupAuthRequest } from '../middleware/groupAuth';
+import {
+  requireGroupMember,
+  requireGroupAdmin,
+  GroupAuthRequest,
+} from '../middleware/groupAuth';
 import { getSessionAgent } from '../auth/agent';
 import * as groupEventsService from '../services/groupEvents';
 import type { RsvpStatus } from '../services/groupEvents';
@@ -53,17 +57,13 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(400).json({ error: 'Event name is required' });
       }
 
-      if (
-        mode &&
-        !['virtual', 'inperson', 'hybrid'].includes(mode)
-      ) {
-        return res.status(400).json({ error: 'Invalid mode. Use: virtual, inperson, hybrid' });
+      if (mode && !['virtual', 'inperson', 'hybrid'].includes(mode)) {
+        return res
+          .status(400)
+          .json({ error: 'Invalid mode. Use: virtual, inperson, hybrid' });
       }
 
-      if (
-        status &&
-        !['scheduled', 'cancelled', 'postponed'].includes(status)
-      ) {
+      if (status && !['scheduled', 'cancelled', 'postponed'].includes(status)) {
         return res.status(400).json({
           error: 'Invalid status. Use: scheduled, cancelled, postponed',
         });
@@ -73,7 +73,16 @@ export const createRouter = (ctx: AppContext) => {
         const event = await groupEventsService.createEvent(
           communityDid,
           userDid,
-          { name: name.trim(), description, startsAt, endsAt, mode, status, locations, uris }
+          {
+            name: name.trim(),
+            description,
+            startsAt,
+            endsAt,
+            mode,
+            status,
+            locations,
+            uris,
+          }
         );
         return res.status(201).json({ event });
       } catch (err) {
@@ -94,7 +103,10 @@ export const createRouter = (ctx: AppContext) => {
       const { communityDid } = req.groupAuth!;
 
       try {
-        const events = await groupEventsService.listEvents(communityDid, ctx.db);
+        const events = await groupEventsService.listEvents(
+          communityDid,
+          ctx.db
+        );
         return res.json({ events });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to list events');
@@ -115,7 +127,11 @@ export const createRouter = (ctx: AppContext) => {
       const eventRkey = req.params.eventRkey as string;
 
       try {
-        const event = await groupEventsService.getEvent(communityDid, eventRkey, ctx.db);
+        const event = await groupEventsService.getEvent(
+          communityDid,
+          eventRkey,
+          ctx.db
+        );
         if (!event) {
           return res.status(404).json({ error: 'Event not found' });
         }
@@ -137,13 +153,24 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
       const eventRkey = req.params.eventRkey as string;
-      const { name, description, startsAt, endsAt, mode, status, locations, uris } = req.body;
+      const {
+        name,
+        description,
+        startsAt,
+        endsAt,
+        mode,
+        status,
+        locations,
+        uris,
+      } = req.body;
 
       if (
         mode !== undefined &&
         !['virtual', 'inperson', 'hybrid'].includes(mode)
       ) {
-        return res.status(400).json({ error: 'Invalid mode. Use: virtual, inperson, hybrid' });
+        return res
+          .status(400)
+          .json({ error: 'Invalid mode. Use: virtual, inperson, hybrid' });
       }
 
       if (
@@ -185,7 +212,11 @@ export const createRouter = (ctx: AppContext) => {
       const eventRkey = req.params.eventRkey as string;
 
       // Fetch first to get the URI (needed for cascade delete)
-      const existing = await groupEventsService.getEvent(communityDid, eventRkey, ctx.db);
+      const existing = await groupEventsService.getEvent(
+        communityDid,
+        eventRkey,
+        ctx.db
+      );
       if (!existing) {
         return res.status(404).json({ error: 'Event not found' });
       }
@@ -238,7 +269,11 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const event = await groupEventsService.getEvent(communityDid, eventRkey, ctx.db);
+      const event = await groupEventsService.getEvent(
+        communityDid,
+        eventRkey,
+        ctx.db
+      );
       if (!event) {
         return res.status(404).json({ error: 'Event not found' });
       }
@@ -279,13 +314,22 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const event = await groupEventsService.getEvent(communityDid, eventRkey, ctx.db);
+      const event = await groupEventsService.getEvent(
+        communityDid,
+        eventRkey,
+        ctx.db
+      );
       if (!event) {
         return res.status(404).json({ error: 'Event not found' });
       }
 
       try {
-        await groupEventsService.removeRsvp(agent, event.uri, eventRkey, ctx.db);
+        await groupEventsService.removeRsvp(
+          agent,
+          event.uri,
+          eventRkey,
+          ctx.db
+        );
         return res.json({ success: true });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to remove RSVP');
@@ -319,7 +363,11 @@ export const createRouter = (ctx: AppContext) => {
         });
       }
 
-      const event = await groupEventsService.getEvent(communityDid, eventRkey, ctx.db);
+      const event = await groupEventsService.getEvent(
+        communityDid,
+        eventRkey,
+        ctx.db
+      );
       if (!event) {
         return res.status(404).json({ error: 'Event not found' });
       }

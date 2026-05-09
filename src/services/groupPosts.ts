@@ -259,8 +259,11 @@ export async function deleteGroupPost(
       );
     }
   } catch (err) {
+    // Pass postUri as structured data rather than interpolating into the message
+    // to avoid CodeQL CWE-134 (externally-controlled format string).
     console.warn(
-      `Failed to clean up postindex for ${postUri} — pointer may be orphaned:`,
+      'Failed to clean up postindex — pointer may be orphaned:',
+      { postUri },
       err
     );
     // Non-fatal: the user-PDS record is already gone; the stale pointer will
