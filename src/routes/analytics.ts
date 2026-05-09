@@ -86,9 +86,7 @@ export const createRouter = (ctx: AppContext) => {
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch weekly active users');
-        res
-          .status(500)
-          .json({ error: 'Failed to fetch weekly active users' });
+        res.status(500).json({ error: 'Failed to fetch weekly active users' });
       }
     })
   );

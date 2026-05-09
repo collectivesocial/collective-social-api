@@ -115,9 +115,7 @@ export const createRouter = (ctx: AppContext) => {
           completedCount: cachedMap.get(g.uri) ?? 0,
           percentage: Math.min(
             100,
-            Math.round(
-              ((cachedMap.get(g.uri) ?? 0) / g.targetCount) * 100
-            )
+            Math.round(((cachedMap.get(g.uri) ?? 0) / g.targetCount) * 100)
           ),
         }));
 
@@ -466,9 +464,7 @@ export const createRouter = (ctx: AppContext) => {
           completedCount: cachedMap.get(g.uri) ?? 0,
           percentage: Math.min(
             100,
-            Math.round(
-              ((cachedMap.get(g.uri) ?? 0) / g.targetCount) * 100
-            )
+            Math.round(((cachedMap.get(g.uri) ?? 0) / g.targetCount) * 100)
           ),
         }));
 

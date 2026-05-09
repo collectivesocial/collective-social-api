@@ -13,7 +13,11 @@
 import express, { Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
-import { requireGroupMember, requireGroupAdmin, GroupAuthRequest } from '../middleware/groupAuth';
+import {
+  requireGroupMember,
+  requireGroupAdmin,
+  GroupAuthRequest,
+} from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri } from '../services/opensocial';
 import type { PdsRecord } from '../services/opensocial';

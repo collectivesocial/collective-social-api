@@ -185,10 +185,7 @@ export function createUserActivityTracker(ctx: AppContext) {
             DO UPDATE SET activity_count = user_activity_log.activity_count + 1
           `.execute(ctx.db);
         } catch (activityErr) {
-          ctx.logger.error(
-            { err: activityErr },
-            'Failed to log user activity'
-          );
+          ctx.logger.error({ err: activityErr }, 'Failed to log user activity');
         }
       }
     } catch (err) {
