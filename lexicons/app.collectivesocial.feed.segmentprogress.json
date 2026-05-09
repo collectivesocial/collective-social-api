@@ -1,0 +1,36 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.segmentprogress",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Tracks the current user's completion of a reading/watching segment. Stored in the user's own PDS repo (not the community repo). One record per segment per user, keyed by segment rkey for idempotent upsert.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["segmentUri", "communityDid", "completed", "createdAt"],
+        "properties": {
+          "segmentUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the app.collectivesocial.group.segment this progress record belongs to."
+          },
+          "communityDid": {
+            "type": "string",
+            "format": "did",
+            "description": "DID of the community that owns the segment. Used to scope reads and aggregation."
+          },
+          "completed": {
+            "type": "boolean",
+            "description": "Whether the user has completed this segment."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "When the user first marked this segment."
+          }
+        }
+      }
+    }
+  }
+}
