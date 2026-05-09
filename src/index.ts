@@ -107,6 +107,27 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// CIMD document — serves the public key for HTTP Message Signatures verification
+app.get('/.well-known/client-metadata.json', async (_req, res) => {
+  try {
+    if (!config.openSocialSigningKey) {
+      return res.status(404).json({ error: 'CIMD not configured' });
+    }
+    const { publicKeyToJwk } = await import('./lib/httpSigning');
+    const jwk = publicKeyToJwk(
+      config.openSocialSigningKey,
+      (config.openSocialKeyAlgorithm || 'ed25519') as any
+    );
+    res.json({
+      client_id: config.serviceUrl || `http://localhost:${config.port}`,
+      client_name: 'Collective Social',
+      jwks: { keys: [jwk] },
+    });
+  } catch {
+    res.status(500).json({ error: 'Failed to generate CIMD document' });
+  }
+});
+
 // Initialize app context and routes
 createAppContext().then((ctx) => {
   // Request logging with correlation IDs
