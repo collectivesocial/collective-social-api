@@ -11,7 +11,7 @@
 import express from 'express';
 import supertest from 'supertest';
 import { pino } from 'pino';
-import { Kysely, PostgresDialect } from 'kysely';
+import { Kysely, PostgresDialect, sql } from 'kysely';
 import { Pool } from 'pg';
 import type { Database } from '../../src/db';
 import { migrateToLatest } from '../../src/migrations';
@@ -43,23 +43,10 @@ export async function cleanupTables(
   tableNames: string[]
 ): Promise<void> {
   for (const table of tableNames) {
-    // RESTART IDENTITY resets serial PKs; CASCADE handles FK children.
-    await db.executeQuery(
-      // Raw SQL — Kysely doesn't have a first-class TRUNCATE builder.
-      (db as any).schema
-        .raw(`TRUNCATE TABLE "${table}" RESTART IDENTITY CASCADE`)
-        .compile()
-        .catch(() => {
-          // Fallback: just delete all rows if TRUNCATE isn't available via schema builder
-        })
-    ).catch(async () => {
-      await (db as any)
-        .deleteFrom(table as any)
-        .execute()
-        .catch(() => {
-          /* table may not exist in this migration snapshot — ignore */
-        });
-    });
+    // sql.raw() is safe here: all callers pass hardcoded string literals.
+    await sql`TRUNCATE TABLE ${sql.raw('"' + table + '"')} RESTART IDENTITY CASCADE`.execute(
+      db as any
+    );
   }
 }
 

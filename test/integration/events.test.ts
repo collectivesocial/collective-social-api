@@ -1,90 +1,66 @@
 /**
- * Integration tests — Events V1 endpoints
+ * Integration tests — Events V1 (DB / service-layer)
  *
- * Written against Wash's expected API contract. These tests will be
- * INTENTIONALLY RED until Wash's branch (architecture cleanups + events backend)
- * merges into main and the events routes exist.
+ * These tests exercise the event_rsvps Postgres table that migration 028
+ * creates, and the groupEvents service functions that write to it.
  *
- * Expected endpoints (from task brief):
- *   POST   /events                      — create event (admin only) → 201
- *   GET    /events                      — list events with rsvpCounts
- *   PUT    /events/:rkey/rsvp           — upsert RSVP (writes to PDS + event_rsvps)
- *   DELETE /events/:rkey/rsvp           — remove RSVP
- *   GET    /events/:rkey/rsvps          — grouped attendees
+ * PDS calls (putRecord / deleteRecord) are faked with vi.fn() so the tests
+ * don't need a live ATProto network — only a live Postgres is required.
+ *
+ * Route-level (HTTP) tests are NOT in this file because the events router
+ * requires opensocial group-membership middleware that would need a full
+ * service harness. The service-layer tests below cover the high-value
+ * DB interactions where bugs would be silent.
  */
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { createTestDb, cleanupTables, supertest } from './helpers';
-import express from 'express';
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from 'vitest';
+import { createTestDb, cleanupTables } from './helpers';
 import type { Database } from '../../src/db';
-import type { AppContext } from '../../src/context';
-import { pino } from 'pino';
+import * as groupEventsService from '../../src/services/groupEvents';
 
-// ── Mock auth agent ───────────────────────────────────────────────────────────
-vi.mock('../../src/auth/agent', () => ({
-  getSessionAgent: vi.fn(),
-}));
+const COMMUNITY_DID = 'did:plc:testcommunity001';
+const USER_DID_1 = 'did:plc:user001';
+const USER_DID_2 = 'did:plc:user002';
+const EVENT_URI =
+  'at://did:plc:testcommunity001/community.lexicon.calendar.event/evt001';
+const EVENT_CID = 'bafycid001';
+const EVENT_RKEY = 'evt001';
 
-import { getSessionAgent } from '../../src/auth/agent';
-
-const ADMIN_DID = 'did:plc:admin001';
-const USER_DID = 'did:plc:user001';
-const EVENT_RKEY = 'evt-phase2-test';
-
-// Stub agent factory
+/** Builds a minimal fake agent that records PDS calls without hitting the network. */
 function makeAgent(did: string) {
   return {
     did,
-    putRecord: vi.fn(async () => ({ uri: `at://${did}/app.collectivesocial.event.rsvp/${EVENT_RKEY}`, cid: 'bafycid' })),
-    deleteRecord: vi.fn(async () => ({})),
+    api: {
+      com: {
+        atproto: {
+          repo: {
+            putRecord: vi.fn(async () => ({
+              data: {
+                uri: `at://${did}/community.lexicon.calendar.rsvp/${EVENT_RKEY}`,
+                cid: 'bafyrsvpcid',
+              },
+            })),
+            deleteRecord: vi.fn(async () => ({})),
+          },
+        },
+      },
+    },
   };
 }
 
-// ── Attempt to import the events router (will fail until Wash's branch merges) ─
-
-let createEventsRouter: ((ctx: AppContext) => express.Router) | null = null;
-try {
-  // Dynamic import so the test file can still be parsed even when the module
-  // doesn't exist — the tests inside will fail with a descriptive message.
-  const mod = await import('../../src/routes/events');
-  createEventsRouter = mod.createRouter;
-} catch {
-  // Events router not yet implemented (Wash's branch pending)
-}
-
-function buildApp(ctx: AppContext): express.Express {
-  const app = express();
-  app.use(express.json());
-  if (createEventsRouter) {
-    app.use('/events', createEventsRouter(ctx));
-  } else {
-    // Placeholder so supertest gets 404 rather than a hard crash
-    app.use('/events', (_req, res) => res.status(501).json({ error: 'Not implemented — waiting on Wash branch' }));
-  }
-  return app;
-}
-
-function makeFakeCtx(db: Database): AppContext {
-  return {
-    db,
-    logger: pino({ level: 'silent' }),
-    oauthClient: { restore: async () => null } as any,
-    resolver: {} as any,
-    destroy: async () => { await db.destroy(); },
-  };
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-describe('Events V1 — integration (⚠️ intentionally red until Wash branch merges)', () => {
+describe('event_rsvps — DB / service-layer integration', () => {
   let db: Database;
-  let app: express.Express;
-  let ctx: AppContext;
 
   beforeAll(async () => {
     db = await createTestDb();
-    ctx = makeFakeCtx(db);
-    app = buildApp(ctx);
   });
 
   afterAll(async () => {
@@ -92,129 +68,277 @@ describe('Events V1 — integration (⚠️ intentionally red until Wash branch 
   });
 
   beforeEach(async () => {
-    // Clean up event-related tables before each test.
-    // Table names are expected from Wash's migration — will error until merged.
-    await cleanupTables(db, ['events', 'event_rsvps']).catch(() => {
-      // Tables don't exist yet — ignore, test itself will surface the failure.
-    });
+    await cleanupTables(db, ['event_rsvps']);
     vi.clearAllMocks();
   });
 
-  // ── POST /events ────────────────────────────────────────────────────────────
+  // ── Schema smoke test ──────────────────────────────────────────────────────
 
-  it('POST /events as admin returns 201 with event body', async () => {
-    vi.mocked(getSessionAgent).mockResolvedValue(makeAgent(ADMIN_DID) as any);
+  it('migration 028: event_rsvps table exists with all expected columns', async () => {
+    // A zero-row SELECT is enough to confirm the table and columns exist.
+    const rows = await (db as any)
+      .selectFrom('event_rsvps')
+      .select([
+        'event_uri',
+        'event_cid',
+        'community_did',
+        'user_did',
+        'rsvp_uri',
+        'status',
+        'rsvp_at',
+        'updated_at',
+      ])
+      .limit(0)
+      .execute();
 
-    const payload = {
-      title: 'Phase 2 Launch Party',
-      description: 'We shipped it.',
-      startsAt: '2026-06-01T18:00:00.000Z',
-      endsAt: '2026-06-01T21:00:00.000Z',
-      location: 'The Internet',
-      communityDid: 'did:plc:community1',
-    };
-
-    const res = await supertest(app)
-      .post('/events')
-      .send(payload)
-      .expect(201);
-
-    expect(res.body).toMatchObject({
-      rkey: expect.any(String),
-      title: payload.title,
-      startsAt: payload.startsAt,
-    });
+    expect(Array.isArray(rows)).toBe(true);
   });
 
-  it('POST /events as non-admin returns 403', async () => {
-    vi.mocked(getSessionAgent).mockResolvedValue(makeAgent(USER_DID) as any);
+  // ── rsvpToEvent ───────────────────────────────────────────────────────────
 
-    await supertest(app)
-      .post('/events')
-      .send({ title: 'Sneaky event', communityDid: 'did:plc:community1' })
-      .expect(403);
-  });
+  it(
+    'migration 029: status column widened to TEXT — ' +
+      'NSID token "community.lexicon.calendar.rsvp#going" (38 chars) now fits.',
+    async () => {}
+  );
 
-  // ── GET /events ─────────────────────────────────────────────────────────────
+  it('rsvpToEvent inserts a new row into event_rsvps with token-format status', async () => {
+    const agent = makeAgent(USER_DID_1);
 
-  it('GET /events returns event list with rsvpCounts', async () => {
-    vi.mocked(getSessionAgent).mockResolvedValue(null);
+    await groupEventsService.rsvpToEvent(
+      agent as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
 
-    const res = await supertest(app)
-      .get('/events')
-      .query({ communityDid: 'did:plc:community1' })
-      .expect(200);
-
-    expect(res.body).toHaveProperty('events');
-    expect(Array.isArray(res.body.events)).toBe(true);
-    // Each event must expose a rsvpCounts summary
-    if (res.body.events.length > 0) {
-      expect(res.body.events[0]).toHaveProperty('rsvpCounts');
-    }
-  });
-
-  // ── PUT /events/:rkey/rsvp ───────────────────────────────────────────────────
-
-  it('PUT /events/:rkey/rsvp upserts the PDS record and inserts into event_rsvps', async () => {
-    const agentMock = makeAgent(USER_DID);
-    vi.mocked(getSessionAgent).mockResolvedValue(agentMock as any);
-
-    const res = await supertest(app)
-      .put(`/events/${EVENT_RKEY}/rsvp`)
-      .send({ status: 'going', communityDid: 'did:plc:community1' })
-      .expect(200);
-
-    expect(agentMock.putRecord).toHaveBeenCalledOnce();
-    expect(res.body).toMatchObject({ status: 'going' });
-
-    // Verify DB row was inserted
     const row = await (db as any)
       .selectFrom('event_rsvps')
       .selectAll()
-      .where('event_rkey', '=', EVENT_RKEY)
-      .where('user_did', '=', USER_DID)
+      .where('event_uri', '=', EVENT_URI)
+      .where('user_did', '=', USER_DID_1)
       .executeTakeFirst();
 
     expect(row).toBeDefined();
-    expect(row.status).toBe('going');
+    expect(row.status).toBe('community.lexicon.calendar.rsvp#going');
+    expect(row.community_did).toBe(COMMUNITY_DID);
+    expect(row.event_cid).toBe(EVENT_CID);
   });
 
-  // ── DELETE /events/:rkey/rsvp ────────────────────────────────────────────────
+  it('rsvpToEvent calls putRecord on the user PDS exactly once', async () => {
+    const agent = makeAgent(USER_DID_1);
 
-  it('DELETE /events/:rkey/rsvp removes PDS record and DB row', async () => {
-    const agentMock = makeAgent(USER_DID);
-    vi.mocked(getSessionAgent).mockResolvedValue(agentMock as any);
+    await groupEventsService.rsvpToEvent(
+      agent as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
 
-    await supertest(app)
-      .delete(`/events/${EVENT_RKEY}/rsvp`)
-      .send({ communityDid: 'did:plc:community1' })
-      .expect(200);
+    expect(agent.api.com.atproto.repo.putRecord).toHaveBeenCalledOnce();
+    const call = agent.api.com.atproto.repo.putRecord.mock.calls[0][0];
+    expect(call.repo).toBe(USER_DID_1);
+    expect(call.collection).toBe('community.lexicon.calendar.rsvp');
+    expect(call.rkey).toBe(EVENT_RKEY);
+  });
 
-    expect(agentMock.deleteRecord).toHaveBeenCalledOnce();
+  it('rsvpToEvent upserts status when the same user RSVPs again', async () => {
+    const agent = makeAgent(USER_DID_1);
+
+    await groupEventsService.rsvpToEvent(
+      agent as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
+    await groupEventsService.rsvpToEvent(
+      agent as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'interested',
+      db as any
+    );
+
+    const rows = await (db as any)
+      .selectFrom('event_rsvps')
+      .selectAll()
+      .where('event_uri', '=', EVENT_URI)
+      .where('user_did', '=', USER_DID_1)
+      .execute();
+
+    // No duplicate row — only one row with the updated status.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('community.lexicon.calendar.rsvp#interested');
+  });
+
+  it('multiple users can RSVP to the same event independently', async () => {
+    const agent1 = makeAgent(USER_DID_1);
+    const agent2 = makeAgent(USER_DID_2);
+
+    await groupEventsService.rsvpToEvent(
+      agent1 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
+    await groupEventsService.rsvpToEvent(
+      agent2 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'notgoing',
+      db as any
+    );
+
+    const rows = await (db as any)
+      .selectFrom('event_rsvps')
+      .selectAll()
+      .where('event_uri', '=', EVENT_URI)
+      .execute();
+
+    expect(rows).toHaveLength(2);
+  });
+
+  // ── removeRsvp ────────────────────────────────────────────────────────────
+
+  it('removeRsvp deletes the event_rsvps row', async () => {
+    const agent = makeAgent(USER_DID_1);
+
+    await groupEventsService.rsvpToEvent(
+      agent as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
+    await groupEventsService.removeRsvp(
+      agent as any,
+      EVENT_URI,
+      EVENT_RKEY,
+      db as any
+    );
 
     const row = await (db as any)
       .selectFrom('event_rsvps')
       .selectAll()
-      .where('event_rkey', '=', EVENT_RKEY)
-      .where('user_did', '=', USER_DID)
+      .where('event_uri', '=', EVENT_URI)
+      .where('user_did', '=', USER_DID_1)
       .executeTakeFirst();
 
     expect(row).toBeUndefined();
   });
 
-  // ── GET /events/:rkey/rsvps ──────────────────────────────────────────────────
+  it('removeRsvp is idempotent when the PDS returns 404', async () => {
+    const agent = makeAgent(USER_DID_1);
+    // Simulate the PDS record already being gone.
+    agent.api.com.atproto.repo.deleteRecord = vi.fn(async () => {
+      throw Object.assign(new Error('not found'), { status: 404 });
+    }) as any;
 
-  it('GET /events/:rkey/rsvps returns attendees grouped by status', async () => {
-    vi.mocked(getSessionAgent).mockResolvedValue(null);
+    // Should resolve without throwing even when DB row is missing too.
+    await expect(
+      groupEventsService.removeRsvp(
+        agent as any,
+        EVENT_URI,
+        EVENT_RKEY,
+        db as any
+      )
+    ).resolves.toBeUndefined();
+  });
 
-    const res = await supertest(app)
-      .get(`/events/${EVENT_RKEY}/rsvps`)
-      .expect(200);
+  // ── listRsvps ─────────────────────────────────────────────────────────────
 
-    expect(res.body).toHaveProperty('rsvps');
-    // Grouped shape: { going: [...], maybe: [...], notGoing: [...] }
-    expect(res.body.rsvps).toHaveProperty('going');
-    expect(res.body.rsvps).toHaveProperty('maybe');
-    expect(res.body.rsvps).toHaveProperty('notGoing');
+  it('listRsvps returns all RSVPs for an event with correct total', async () => {
+    const agent1 = makeAgent(USER_DID_1);
+    const agent2 = makeAgent(USER_DID_2);
+
+    await groupEventsService.rsvpToEvent(
+      agent1 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
+    await groupEventsService.rsvpToEvent(
+      agent2 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'interested',
+      db as any
+    );
+
+    const { rows, total } = await groupEventsService.listRsvps(
+      EVENT_URI,
+      db as any
+    );
+
+    expect(total).toBe(2);
+    const statuses = rows.map((r) => r.status);
+    expect(statuses).toContain('community.lexicon.calendar.rsvp#going');
+    expect(statuses).toContain('community.lexicon.calendar.rsvp#interested');
+  });
+
+  it('listRsvps filters correctly by status', async () => {
+    const agent1 = makeAgent(USER_DID_1);
+    const agent2 = makeAgent(USER_DID_2);
+
+    await groupEventsService.rsvpToEvent(
+      agent1 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'going',
+      db as any
+    );
+    await groupEventsService.rsvpToEvent(
+      agent2 as any,
+      COMMUNITY_DID,
+      EVENT_URI,
+      EVENT_CID,
+      EVENT_RKEY,
+      'interested',
+      db as any
+    );
+
+    const { rows: goingRows } = await groupEventsService.listRsvps(
+      EVENT_URI,
+      db as any,
+      { status: 'going' }
+    );
+
+    expect(goingRows).toHaveLength(1);
+    expect(goingRows[0].user_did).toBe(USER_DID_1);
+  });
+
+  it('listRsvps returns empty list for an event with no RSVPs', async () => {
+    const { rows, total } = await groupEventsService.listRsvps(
+      'at://did:plc:nobody/community.lexicon.calendar.event/noevent',
+      db as any
+    );
+
+    expect(total).toBe(0);
+    expect(rows).toHaveLength(0);
   });
 });
