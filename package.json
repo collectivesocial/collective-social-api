@@ -16,7 +16,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",
     "lexgen": "lex gen-server ./src/lexicon ./lexicons/*",
     "make-admin": "ts-node scripts/makeAdmin.ts",
-    "test:integration": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "prepare": "husky"
   },
   "author": "",

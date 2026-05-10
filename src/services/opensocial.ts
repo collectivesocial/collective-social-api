@@ -521,22 +521,9 @@ export async function resolveUserPermissions(
     return userRoles.includes(requiredRole);
   };
 
-  // If we got permission rows from open-social, use them
-  if (permissions.length > 0) {
-    const result: Record<string, ResolvedCollectionPermission> = {};
-    for (const perm of permissions) {
-      result[perm.collection] = {
-        canCreate: resolve(perm.canCreate),
-        canRead: resolve(perm.canRead),
-        canUpdate: resolve(perm.canUpdate),
-        canDelete: resolve(perm.canDelete),
-      };
-    }
-    return result;
-  }
-
-  // Fallback: no permission rows (app not enabled yet).
-  // Use hardcoded defaults matching the original middleware behavior.
+  // Hardcoded defaults matching the original middleware behavior.
+  // Used as a baseline so that collections not yet seeded in the DB are
+  // always present. DB rows take precedence when they exist.
   const DEFAULTS: Record<
     string,
     { c: string; r: string; u: string; d: string }
@@ -593,6 +580,7 @@ export async function resolveUserPermissions(
     },
   };
 
+  // Build from DEFAULTS as baseline
   const result: Record<string, ResolvedCollectionPermission> = {};
   for (const [col, def] of Object.entries(DEFAULTS)) {
     result[col] = {
@@ -602,5 +590,17 @@ export async function resolveUserPermissions(
       canDelete: resolve(def.d),
     };
   }
+
+  // Overlay DB rows: community-specific overrides take precedence over DEFAULTS.
+  // Also covers collections not in DEFAULTS (e.g. app-specific custom collections).
+  for (const perm of permissions) {
+    result[perm.collection] = {
+      canCreate: resolve(perm.canCreate),
+      canRead: resolve(perm.canRead),
+      canUpdate: resolve(perm.canUpdate),
+      canDelete: resolve(perm.canDelete),
+    };
+  }
+
   return result;
 }

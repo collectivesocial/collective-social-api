@@ -23,7 +23,9 @@ import type { AppContext } from '../../src/context';
 export async function createTestDb(): Promise<Database> {
   const connectionString = process.env.DATABASE_URL_TEST;
   if (!connectionString) {
-    throw new Error('DATABASE_URL_TEST env var is required for integration tests');
+    throw new Error(
+      'DATABASE_URL_TEST env var is required for integration tests'
+    );
   }
 
   const db = new Kysely<import('../../src/db').DatabaseSchema>({
@@ -43,6 +45,7 @@ export async function cleanupTables(
   tableNames: string[]
 ): Promise<void> {
   for (const table of tableNames) {
+    // RESTART IDENTITY resets serial PKs; CASCADE handles FK children.
     // sql.raw() is safe here: all callers pass hardcoded string literals.
     await sql`TRUNCATE TABLE ${sql.raw('"' + table + '"')} RESTART IDENTITY CASCADE`.execute(
       db as any
