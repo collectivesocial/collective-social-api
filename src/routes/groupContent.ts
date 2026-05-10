@@ -11,7 +11,6 @@
  */
 
 import express, { Response } from 'express';
-import { Agent } from '@atproto/api';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
@@ -968,7 +967,7 @@ export const createRouter = (ctx: AppContext) => {
   /**
    * GET /groups/:communityDid/segments/:segmentRkey/roster
    * Fetch all members' completion status for a segment, enriched with profiles.
-   * Reads each member's PDS for their progress record.
+   * Reads from the segment_completions cache table.
    */
   router.get(
     '/segments/:segmentRkey/roster',
@@ -977,55 +976,29 @@ export const createRouter = (ctx: AppContext) => {
       const { communityDid } = req.groupAuth!;
       const segmentRkey = req.params.segmentRkey as string;
 
-      // Verify segment exists
-      try {
-        await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
-      } catch {
-        return res.status(404).json({ error: 'Segment not found' });
-      }
-
-      // Get all community members
-      const { members } = await opensocial.listMembers(communityDid);
-      const memberDids = members
-        .map((m) => m.did)
-        .filter((did): did is string => !!did);
-
-      // Read each member's PDS for the progress record
-      const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
-      const completions: Array<{ did: string; completedAt: string }> = [];
-
-      await Promise.all(
-        memberDids.map(async (did) => {
-          try {
-            const rec = await publicAgent.api.com.atproto.repo.getRecord({
-              repo: did,
-              collection: COL_SEGMENT_PROGRESS_USER,
-              rkey: segmentRkey,
-            });
-            const val = rec.data.value as any;
-            if (val.completed) {
-              completions.push({ did, completedAt: val.createdAt });
-            }
-          } catch {
-            // No progress record for this member
-          }
-        })
-      );
+      // Query cached completions
+      const completions = await ctx.db
+        .selectFrom('segment_completions')
+        .selectAll()
+        .where('community_did', '=', communityDid)
+        .where('segment_rkey', '=', segmentRkey)
+        .execute();
 
       // Enrich with profiles
-      const profiles = await userProfileService.enrichWithUserProfiles(
-        completions.map((c) => c.did)
-      );
+      const dids = completions.map((c) => c.user_did);
+      const profiles = dids.length > 0
+        ? await userProfileService.enrichWithUserProfiles(dids)
+        : {};
 
       const roster = completions.map((c) => ({
-        did: c.did,
-        handle: profiles[c.did]?.handle || c.did.slice(0, 20) + '…',
-        displayName: profiles[c.did]?.displayName,
-        avatar: profiles[c.did]?.avatar,
-        completedAt: c.completedAt,
+        did: c.user_did,
+        handle: profiles[c.user_did]?.handle || c.user_did.slice(0, 20) + '…',
+        displayName: profiles[c.user_did]?.displayName,
+        avatar: profiles[c.user_did]?.avatar,
+        completedAt: c.completed_at.toISOString(),
       }));
 
-      return res.json({ roster, total: memberDids.length });
+      return res.json({ roster });
     })
   );
 
@@ -1071,6 +1044,20 @@ export const createRouter = (ctx: AppContext) => {
           rkey: segmentRkey,
         });
         if (existingRecord.data) {
+          // Backfill cache if missing
+          const existingVal = existingRecord.data.value as any;
+          await ctx.db
+            .insertInto('segment_completions')
+            .values({
+              community_did: communityDid,
+              segment_rkey: segmentRkey,
+              user_did: userDid!,
+              completed_at: new Date(existingVal.createdAt || new Date().toISOString()),
+            })
+            .onConflict((oc) => oc.doNothing())
+            .execute()
+            .catch(() => {});
+
           return res.json({
             progress: {
               uri: existingRecord.data.uri,
@@ -1109,6 +1096,22 @@ export const createRouter = (ctx: AppContext) => {
         return res
           .status(500)
           .json({ error: 'Failed to create progress record' });
+      }
+
+      // Cache completion in Postgres for roster queries
+      try {
+        await ctx.db
+          .insertInto('segment_completions')
+          .values({
+            community_did: communityDid,
+            segment_rkey: segmentRkey,
+            user_did: userDid!,
+            completed_at: new Date(now),
+          })
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      } catch (cacheErr) {
+        ctx.logger.warn({ err: cacheErr }, 'Failed to cache segment completion');
       }
 
       // ── Sync to personal progress ──────────────────────────────
@@ -1191,6 +1194,7 @@ export const createRouter = (ctx: AppContext) => {
     '/segments/:segmentRkey/progress',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid, userDid } = req.groupAuth!;
       const segmentRkey = req.params.segmentRkey as string;
 
       const agent = await getSessionAgent(req, res, ctx);
@@ -1212,6 +1216,18 @@ export const createRouter = (ctx: AppContext) => {
         return res
           .status(500)
           .json({ error: 'Failed to delete progress record' });
+      }
+
+      // Remove from cache
+      try {
+        await ctx.db
+          .deleteFrom('segment_completions')
+          .where('community_did', '=', communityDid)
+          .where('segment_rkey', '=', segmentRkey)
+          .where('user_did', '=', userDid!)
+          .execute();
+      } catch (cacheErr) {
+        ctx.logger.warn({ err: cacheErr }, 'Failed to remove cached completion');
       }
 
       return res.json({ success: true });

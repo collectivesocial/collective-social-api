@@ -712,6 +712,38 @@ migrations['029'] = {
   },
 };
 
+// Migration 030: segment_completions cache table
+// Similar pattern to event_rsvps — PDS is source of truth, this caches for fast roster queries.
+// ────────────────────────────────────────────────────────────────────────────
+migrations['030'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('segment_completions')
+      .addColumn('community_did', 'text', (col) => col.notNull())
+      .addColumn('segment_rkey', 'text', (col) => col.notNull())
+      .addColumn('user_did', 'text', (col) => col.notNull())
+      .addColumn('completed_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addPrimaryKeyConstraint('segment_completions_pkey', [
+        'community_did',
+        'segment_rkey',
+        'user_did',
+      ])
+      .execute();
+
+    await db.schema
+      .createIndex('segment_completions_segment_idx')
+      .on('segment_completions')
+      .columns(['community_did', 'segment_rkey'])
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('segment_completions').ifExists().execute();
+  },
+};
+
 export { migrations, migrationProvider };
 
 export const migrateToLatest = async (db: Kysely<any>) => {

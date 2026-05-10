@@ -129,6 +129,13 @@ export type Reaction = {
   createdAt: Date;
 };
 
+export type SegmentCompletion = {
+  community_did: string;
+  segment_rkey: string;
+  user_did: string;
+  completed_at: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -147,6 +154,7 @@ export type DatabaseSchema = {
   user_activity_log: UserActivityLog;
   bluesky_share_events: BlueskyShareEvent;
   goals: Goal;
+  segment_completions: SegmentCompletion;
 };
 
 // APIs
