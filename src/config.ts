@@ -59,5 +59,9 @@ export const config = {
     'CollectiveSocial.app/1.0 (contact@collectivesocial.app)',
   openSocialApiUrl: process.env.OPENSOCIAL_API_URL || 'http://127.0.0.1:3001',
   openSocialApiKey: process.env.OPENSOCIAL_API_KEY || '',
+  // CIMD / HTTP Message Signatures auth (preferred over API key when set)
+  openSocialSigningKey: process.env.OPENSOCIAL_SIGNING_KEY || '',
+  openSocialKeyId: process.env.OPENSOCIAL_KEY_ID || 'collective-social-key-1',
+  openSocialKeyAlgorithm: process.env.OPENSOCIAL_KEY_ALGORITHM || 'ed25519',
   corsOrigin: process.env.CORS_ORIGIN, // e.g. https://app.collectivesocial.app
 } as const;

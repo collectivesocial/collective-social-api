@@ -1,8 +1,11 @@
 /**
  * OpenSocial API client for Collective Social.
  *
- * Uses an API key registered through the OpenSocial developer UI
- * (stored in OPENSOCIAL_API_KEY env var) to talk to the OpenSocial backend.
+ * Supports two authentication modes:
+ * - API key (X-Api-Key header) — legacy, used when OPENSOCIAL_API_KEY is set
+ * - CIMD + HTTP Message Signatures — used when OPENSOCIAL_SIGNING_KEY is set
+ *
+ * When both are configured, HTTP Message Signatures take priority.
  *
  * Most data operations use XRPC endpoints (/xrpc/community.opensocial.*)
  * instead of REST. App-management endpoints (createCommunity, verifyCredentials,
@@ -10,9 +13,21 @@
  */
 
 import { config } from '../config';
+import { signRequest, type SigningConfig } from '../lib/httpSigning';
 
 const OPENSOCIAL_API_URL = config.openSocialApiUrl;
 const OPENSOCIAL_API_KEY = config.openSocialApiKey;
+
+// Build signing config from env if available
+let signingConfig: SigningConfig | null = null;
+if (config.openSocialSigningKey) {
+  signingConfig = {
+    privateKey: config.openSocialSigningKey,
+    keyId: config.openSocialKeyId || 'collective-social-key-1',
+    algorithm: (config.openSocialKeyAlgorithm ||
+      'ed25519') as SigningConfig['algorithm'],
+  };
+}
 
 interface Community {
   did: string;
@@ -69,21 +84,39 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       500
     );
   }
-  if (!OPENSOCIAL_API_KEY) {
+  if (!signingConfig && !OPENSOCIAL_API_KEY) {
     throw new OpenSocialClientError(
-      'OPENSOCIAL_API_KEY is not configured',
+      'Neither OPENSOCIAL_SIGNING_KEY nor OPENSOCIAL_API_KEY is configured',
       500
     );
   }
 
   const url = `${OPENSOCIAL_API_URL}${path}`;
+  const body = options.body as string | undefined;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  };
+
+  // Prefer HTTP Message Signatures when signing key is configured
+  if (signingConfig) {
+    const sigHeaders = signRequest(
+      {
+        method: options.method || 'GET',
+        url,
+        headers,
+        body,
+      },
+      signingConfig
+    );
+    Object.assign(headers, sigHeaders);
+  } else {
+    headers['X-Api-Key'] = OPENSOCIAL_API_KEY;
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Api-Key': OPENSOCIAL_API_KEY,
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -543,6 +576,14 @@ export async function resolveUserPermissions(
       r: 'member',
       u: 'member',
       d: 'member',
+    },
+    // Events are created/updated/deleted by admins; all members can read.
+    // RSVPs are user-PDS records and are NOT in DEFAULTS (OpenSocial is not in that path).
+    'community.lexicon.calendar.event': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
     },
   };
 

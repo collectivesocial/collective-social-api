@@ -2,10 +2,8 @@ import express, { Request, Response } from 'express';
 import { getIronSession } from 'iron-session';
 import { sql } from 'kysely';
 import type { AppContext } from '../context';
-import { config } from '../config';
 import { handler } from '../lib/http';
-
-type Session = { did?: string };
+import { SESSION_OPTIONS, Session } from '../auth/session';
 
 async function requireAdmin(
   req: express.Request,
@@ -13,16 +11,7 @@ async function requireAdmin(
   ctx: AppContext
 ): Promise<boolean> {
   res.setHeader('Vary', 'Cookie');
-  const session = await getIronSession<Session>(req, res, {
-    cookieName: 'sid',
-    password: config.cookieSecret,
-    cookieOptions: {
-      secure: config.nodeEnv === 'production',
-      sameSite: 'lax',
-      httpOnly: true,
-      path: '/',
-    },
-  });
+  const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
   if (!session.did) {
     res.status(401).json({ error: 'Not authenticated' });
     return false;
@@ -97,9 +86,7 @@ export const createRouter = (ctx: AppContext) => {
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch weekly active users');
-        res
-          .status(500)
-          .json({ error: 'Failed to fetch weekly active users' });
+        res.status(500).json({ error: 'Failed to fetch weekly active users' });
       }
     })
   );
