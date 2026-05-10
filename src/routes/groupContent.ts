@@ -641,6 +641,29 @@ export const createRouter = (ctx: AppContext) => {
         })
       );
 
+      // Backfill segment_completions cache for any completed segments
+      const completed = Object.entries(progressBySegment).filter(
+        ([, prog]) => prog && (prog as any).completed
+      );
+      if (completed.length > 0) {
+        await Promise.all(
+          completed.map(([, prog]) => {
+            const p = prog as any;
+            return ctx.db
+              .insertInto('segment_completions')
+              .values({
+                community_did: communityDid,
+                segment_rkey: p.rkey,
+                user_did: agent.did!,
+                completed_at: new Date(p.createdAt || new Date().toISOString()),
+              })
+              .onConflict((oc) => oc.doNothing())
+              .execute()
+              .catch(() => {});
+          })
+        );
+      }
+
       return res.json({ progressBySegment });
     })
   );
