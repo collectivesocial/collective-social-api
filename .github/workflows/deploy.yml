@@ -30,5 +30,8 @@ jobs:
                     --resource-group open-collective-social \
                     --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }} \
                     --set-env-vars \
-                      OPENSOCIAL_SIGNING_KEY=${{ secrets.OPENSOCIAL_SIGNING_KEY }} \
-                      OPENSOCIAL_KEY_ID=${{ secrets.OPENSOCIAL_KEY_ID }}
+                      "OPENSOCIAL_SIGNING_KEY=$OPENSOCIAL_SIGNING_KEY" \
+                      "OPENSOCIAL_KEY_ID=$OPENSOCIAL_KEY_ID"
+              env:
+                  OPENSOCIAL_SIGNING_KEY: ${{ secrets.OPENSOCIAL_SIGNING_KEY }}
+                  OPENSOCIAL_KEY_ID: ${{ secrets.OPENSOCIAL_KEY_ID }}
