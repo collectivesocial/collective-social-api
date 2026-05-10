@@ -98,8 +98,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...(options.headers as Record<string, string>),
   };
 
-  // Prefer HTTP Message Signatures when signing key is configured
-  if (signingConfig) {
+  // Use API key auth when available; HTTP Message Signatures require the
+  // app to be registered with auth_method='http_signature' on the server,
+  // so we fall back to them only when no API key is configured.
+  if (OPENSOCIAL_API_KEY) {
+    headers['X-Api-Key'] = OPENSOCIAL_API_KEY;
+  } else if (signingConfig) {
     const sigHeaders = signRequest(
       {
         method: options.method || 'GET',
@@ -110,8 +114,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       signingConfig
     );
     Object.assign(headers, sigHeaders);
-  } else {
-    headers['X-Api-Key'] = OPENSOCIAL_API_KEY;
   }
 
   const response = await fetch(url, {
