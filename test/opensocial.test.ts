@@ -8,6 +8,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock config so the request() guard doesn't throw in CI where
+// OPENSOCIAL_API_KEY / OPENSOCIAL_SIGNING_KEY aren't set.
+vi.mock('../src/config', () => ({
+  config: {
+    openSocialApiUrl: 'http://localhost:3001',
+    openSocialApiKey: 'test-api-key',
+    openSocialSigningKey: '',
+    openSocialKeyId: '',
+    openSocialKeyAlgorithm: '',
+  },
+}));
+
 import { resolveUserPermissions } from '../src/services/opensocial';
 
 // Mock fetch globally so no real HTTP calls are made.
