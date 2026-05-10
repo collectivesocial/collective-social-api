@@ -11,6 +11,7 @@
  */
 
 import express, { Response } from 'express';
+import { Agent } from '@atproto/api';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
@@ -961,6 +962,70 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       return res.json({ progress });
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/roster
+   * Fetch all members' completion status for a segment, enriched with profiles.
+   * Reads each member's PDS for their progress record.
+   */
+  router.get(
+    '/segments/:segmentRkey/roster',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      // Verify segment exists
+      try {
+        await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      // Get all community members
+      const { members } = await opensocial.listMembers(communityDid);
+      const memberDids = members
+        .map((m) => m.did)
+        .filter((did): did is string => !!did);
+
+      // Read each member's PDS for the progress record
+      const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
+      const completions: Array<{ did: string; completedAt: string }> = [];
+
+      await Promise.all(
+        memberDids.map(async (did) => {
+          try {
+            const rec = await publicAgent.api.com.atproto.repo.getRecord({
+              repo: did,
+              collection: COL_SEGMENT_PROGRESS_USER,
+              rkey: segmentRkey,
+            });
+            const val = rec.data.value as any;
+            if (val.completed) {
+              completions.push({ did, completedAt: val.createdAt });
+            }
+          } catch {
+            // No progress record for this member
+          }
+        })
+      );
+
+      // Enrich with profiles
+      const profiles = await userProfileService.enrichWithUserProfiles(
+        completions.map((c) => c.did)
+      );
+
+      const roster = completions.map((c) => ({
+        did: c.did,
+        handle: profiles[c.did]?.handle || c.did.slice(0, 20) + '…',
+        displayName: profiles[c.did]?.displayName,
+        avatar: profiles[c.did]?.avatar,
+        completedAt: c.completedAt,
+      }));
+
+      return res.json({ roster, total: memberDids.length });
     })
   );
 
