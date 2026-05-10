@@ -631,6 +631,7 @@ export const createRouter = (ctx: AppContext) => {
             progressBySegment[seg.uri] = {
               uri: rec.data.uri,
               rkey: segRkey,
+              memberDid: agent.did!,
               ...(rec.data.value as object),
             };
           } catch {
@@ -952,6 +953,7 @@ export const createRouter = (ctx: AppContext) => {
         progress = {
           uri: rec.data.uri,
           rkey: segmentRkey,
+          memberDid: agent.did!,
           ...(rec.data.value as object),
         };
       } catch {
