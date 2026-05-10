@@ -6,6 +6,10 @@
  * - CIMD + HTTP Message Signatures — used when OPENSOCIAL_SIGNING_KEY is set
  *
  * When both are configured, HTTP Message Signatures take priority.
+ *
+ * Most data operations use XRPC endpoints (/xrpc/community.opensocial.*)
+ * instead of REST. App-management endpoints (createCommunity, verifyCredentials,
+ * checkMembership) remain REST.
  */
 
 import { config } from '../config';
@@ -128,6 +132,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+/**
+ * Make an XRPC query (GET) call to Open Social.
+ */
+async function xrpcQuery<T>(
+  method: string,
+  params: Record<string, string | number | undefined> = {}
+): Promise<T> {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) searchParams.set(key, String(value));
+  }
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return request<T>(`/xrpc/${method}${qs}`);
+}
+
+/**
+ * Make an XRPC procedure (POST) call to Open Social.
+ */
+async function xrpcProcedure<T>(
+  method: string,
+  input: Record<string, unknown> = {}
+): Promise<T> {
+  return request<T>(`/xrpc/${method}`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 // ── PDS record types ─────────────────────────────────────────────
 
 /** A PDS record with its AT-URI, CID, and value. */
@@ -173,12 +205,9 @@ export async function listCommunities(
   userDid?: string,
   query?: string
 ): Promise<Community[]> {
-  const params = new URLSearchParams();
-  if (userDid) params.set('userDid', userDid);
-  if (query) params.set('query', query);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  const data = await request<{ communities: Community[] }>(
-    `/api/v1/communities${qs}`
+  const data = await xrpcQuery<{ communities: Community[] }>(
+    'community.opensocial.searchCommunities',
+    { userDid, query, limit: 100 }
   );
   return data.communities;
 }
@@ -190,8 +219,12 @@ export async function getCommunity(
   did: string,
   userDid?: string
 ): Promise<{ community: CommunityDetail; is_admin: boolean }> {
-  const params = userDid ? `?user_did=${encodeURIComponent(userDid)}` : '';
-  return request(`/api/v1/communities/${encodeURIComponent(did)}${params}`);
+  const data = await xrpcQuery<{
+    community: CommunityDetail;
+    isAdmin: boolean;
+  }>('community.opensocial.getCommunity', { did, userDid });
+  // Map XRPC field name back to REST convention for backward compatibility
+  return { community: data.community, is_admin: data.isAdmin };
 }
 
 /**
@@ -216,9 +249,9 @@ export async function deleteCommunity(
   did: string,
   userDid: string
 ): Promise<void> {
-  await request(`/api/v1/communities/${encodeURIComponent(did)}`, {
-    method: 'DELETE',
-    body: JSON.stringify({ user_did: userDid }),
+  await xrpcProcedure('community.opensocial.deleteCommunity', {
+    communityDid: did,
+    adminDid: userDid,
   });
 }
 
@@ -229,15 +262,13 @@ export async function deleteCommunity(
 export async function joinCommunity(
   communityDid: string,
   userDid: string,
-  userPdsHost: string
+  _userPdsHost: string
 ): Promise<JoinInfo> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/members`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ user_did: userDid, user_pds_host: userPdsHost }),
-    }
-  );
+  return xrpcProcedure('community.opensocial.joinCommunity', {
+    communityDid,
+    userDid,
+    membershipCid: '',
+  });
 }
 
 /**
@@ -297,18 +328,13 @@ export async function createCommunityRecord(
   record: Record<string, unknown>,
   rkey?: string
 ): Promise<RecordResponse> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        userDid,
-        collection,
-        record: { $type: collection, ...record },
-        rkey,
-      }),
-    }
-  );
+  return xrpcProcedure('community.opensocial.createRecord', {
+    communityDid,
+    userDid,
+    collection,
+    record: { $type: collection, ...record },
+    rkey,
+  });
 }
 
 /**
@@ -322,18 +348,13 @@ export async function updateCommunityRecord(
   rkey: string,
   record: Record<string, unknown>
 ): Promise<RecordResponse> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({
-        userDid,
-        collection,
-        rkey,
-        record: { $type: collection, ...record },
-      }),
-    }
-  );
+  return xrpcProcedure('community.opensocial.putRecord', {
+    communityDid,
+    userDid,
+    collection,
+    rkey,
+    record: { $type: collection, ...record },
+  });
 }
 
 /**
@@ -345,10 +366,12 @@ export async function deleteCommunityRecord(
   collection: string,
   rkey: string
 ): Promise<{ success: boolean }> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}?userDid=${encodeURIComponent(userDid)}`,
-    { method: 'DELETE' }
-  );
+  return xrpcProcedure('community.opensocial.deleteRecord', {
+    communityDid,
+    userDid,
+    collection,
+    rkey,
+  });
 }
 
 /**
@@ -359,13 +382,12 @@ export async function listCommunityRecords(
   collection: string,
   opts?: { limit?: number; cursor?: string }
 ): Promise<ListRecordsResponse> {
-  const params = new URLSearchParams();
-  if (opts?.limit) params.set('limit', String(opts.limit));
-  if (opts?.cursor) params.set('cursor', opts.cursor);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}${qs}`
-  );
+  return xrpcQuery('community.opensocial.listRecords', {
+    communityDid,
+    collection,
+    limit: opts?.limit,
+    cursor: opts?.cursor,
+  });
 }
 
 /**
@@ -376,9 +398,11 @@ export async function getCommunityRecord(
   collection: string,
   rkey: string
 ): Promise<RecordValue> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}`
-  );
+  return xrpcQuery('community.opensocial.getRecord', {
+    communityDid,
+    collection,
+    rkey,
+  });
 }
 
 /**
@@ -402,13 +426,12 @@ export async function checkMembership(
  */
 export async function listMembers(
   communityDid: string,
-  search?: string
+  _search?: string
 ): Promise<MembersResponse> {
-  const params = new URLSearchParams({ public: 'true' });
-  if (search) params.set('search', search);
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/members?${params.toString()}`
-  );
+  return xrpcQuery('community.opensocial.getMembers', {
+    communityDid,
+    limit: 100,
+  });
 }
 
 // ── Permissions ───────────────────────────────────────────────────
@@ -456,12 +479,9 @@ export async function getCommunityPermissions(
     return cached.data;
   }
 
-  const params = new URLSearchParams();
-  if (userDid) params.set('userDid', userDid);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-
-  const data = await request<PermissionsResponse>(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/permissions${qs}`
+  const data = await xrpcQuery<PermissionsResponse>(
+    'community.opensocial.getPermissions',
+    { communityDid, userDid }
   );
 
   permissionsCache.set(cacheKey, { data, fetchedAt: Date.now() });

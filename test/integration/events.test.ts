@@ -96,14 +96,13 @@ describe('event_rsvps — DB / service-layer integration', () => {
 
   // ── rsvpToEvent ───────────────────────────────────────────────────────────
 
-  it.skip(
-    'F7-bug-discovered: migration 028 status column is varchar(16) — ' +
-      'too short for token "community.lexicon.calendar.rsvp#going" (38 chars). ' +
-      'Wash must widen the column. Skipping all rsvpToEvent DB-write tests.',
+  it(
+    'migration 029: status column widened to TEXT — ' +
+      'NSID token "community.lexicon.calendar.rsvp#going" (38 chars) now fits.',
     async () => {}
   );
 
-  it.skip('F7-bug-discovered [varchar-overflow]: rsvpToEvent inserts a new row into event_rsvps with token-format status', async () => {
+  it('rsvpToEvent inserts a new row into event_rsvps with token-format status', async () => {
     const agent = makeAgent(USER_DID_1);
 
     await groupEventsService.rsvpToEvent(
@@ -129,7 +128,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
     expect(row.event_cid).toBe(EVENT_CID);
   });
 
-  it.skip('F7-bug-discovered [varchar-overflow]: rsvpToEvent calls putRecord on the user PDS exactly once', async () => {
+  it('rsvpToEvent calls putRecord on the user PDS exactly once', async () => {
     const agent = makeAgent(USER_DID_1);
 
     await groupEventsService.rsvpToEvent(
@@ -149,7 +148,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
     expect(call.rkey).toBe(EVENT_RKEY);
   });
 
-  it.skip('F7-bug-discovered [varchar-overflow]: rsvpToEvent upserts status when the same user RSVPs again', async () => {
+  it('rsvpToEvent upserts status when the same user RSVPs again', async () => {
     const agent = makeAgent(USER_DID_1);
 
     await groupEventsService.rsvpToEvent(
@@ -183,7 +182,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
     expect(rows[0].status).toBe('community.lexicon.calendar.rsvp#interested');
   });
 
-  it.skip('F7-bug-discovered [varchar-overflow]: multiple users can RSVP to the same event independently', async () => {
+  it('multiple users can RSVP to the same event independently', async () => {
     const agent1 = makeAgent(USER_DID_1);
     const agent2 = makeAgent(USER_DID_2);
 
@@ -217,7 +216,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
 
   // ── removeRsvp ────────────────────────────────────────────────────────────
 
-  it.skip('F7-bug-discovered [varchar-overflow]: removeRsvp deletes the event_rsvps row', async () => {
+  it('removeRsvp deletes the event_rsvps row', async () => {
     const agent = makeAgent(USER_DID_1);
 
     await groupEventsService.rsvpToEvent(
@@ -266,7 +265,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
 
   // ── listRsvps ─────────────────────────────────────────────────────────────
 
-  it.skip('F7-bug-discovered [varchar-overflow]: listRsvps returns all RSVPs for an event with correct total', async () => {
+  it('listRsvps returns all RSVPs for an event with correct total', async () => {
     const agent1 = makeAgent(USER_DID_1);
     const agent2 = makeAgent(USER_DID_2);
 
@@ -300,7 +299,7 @@ describe('event_rsvps — DB / service-layer integration', () => {
     expect(statuses).toContain('community.lexicon.calendar.rsvp#interested');
   });
 
-  it.skip('F7-bug-discovered [varchar-overflow]: listRsvps filters correctly by status', async () => {
+  it('listRsvps filters correctly by status', async () => {
     const agent1 = makeAgent(USER_DID_1);
     const agent2 = makeAgent(USER_DID_2);
 
