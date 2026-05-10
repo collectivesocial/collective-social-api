@@ -135,7 +135,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 /**
  * Make an XRPC query (GET) call to Open Social.
  */
-async function xrpcQuery<T>(method: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+async function xrpcQuery<T>(
+  method: string,
+  params: Record<string, string | number | undefined> = {}
+): Promise<T> {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) searchParams.set(key, String(value));
@@ -147,7 +150,10 @@ async function xrpcQuery<T>(method: string, params: Record<string, string | numb
 /**
  * Make an XRPC procedure (POST) call to Open Social.
  */
-async function xrpcProcedure<T>(method: string, input: Record<string, unknown> = {}): Promise<T> {
+async function xrpcProcedure<T>(
+  method: string,
+  input: Record<string, unknown> = {}
+): Promise<T> {
   return request<T>(`/xrpc/${method}`, {
     method: 'POST',
     body: JSON.stringify(input),
@@ -213,10 +219,10 @@ export async function getCommunity(
   did: string,
   userDid?: string
 ): Promise<{ community: CommunityDetail; is_admin: boolean }> {
-  const data = await xrpcQuery<{ community: CommunityDetail; isAdmin: boolean }>(
-    'community.opensocial.getCommunity',
-    { did, userDid }
-  );
+  const data = await xrpcQuery<{
+    community: CommunityDetail;
+    isAdmin: boolean;
+  }>('community.opensocial.getCommunity', { did, userDid });
   // Map XRPC field name back to REST convention for backward compatibility
   return { community: data.community, is_admin: data.isAdmin };
 }
