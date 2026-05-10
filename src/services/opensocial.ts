@@ -205,11 +205,21 @@ export async function listCommunities(
   userDid?: string,
   query?: string
 ): Promise<Community[]> {
-  const data = await xrpcQuery<{ communities: Community[] }>(
+  const data = await xrpcQuery<{ communities: any[] }>(
     'community.opensocial.searchCommunities',
     { userDid, query, limit: 100 }
   );
-  return data.communities;
+  // Map XRPC camelCase fields to internal snake_case convention
+  return data.communities.map((c) => ({
+    did: c.did,
+    handle: c.handle,
+    display_name: c.displayName || c.display_name || '',
+    pds_host: c.pdsHost || c.pds_host || '',
+    created_at: c.createdAt || c.created_at || '',
+    is_admin: c.isAdmin ?? c.is_admin ?? false,
+    member_count: c.memberCount ?? c.member_count ?? 0,
+    type: c.type || 'open',
+  }));
 }
 
 /**
@@ -220,11 +230,32 @@ export async function getCommunity(
   userDid?: string
 ): Promise<{ community: CommunityDetail; is_admin: boolean }> {
   const data = await xrpcQuery<{
-    community: CommunityDetail;
+    community: any;
     isAdmin: boolean;
   }>('community.opensocial.getCommunity', { did, userDid });
-  // Map XRPC field name back to REST convention for backward compatibility
-  return { community: data.community, is_admin: data.isAdmin };
+  // Map XRPC camelCase fields to internal snake_case convention
+  const c = data.community;
+  return {
+    community: {
+      did: c.did,
+      handle: c.handle,
+      pds_host: c.pdsHost || c.pds_host || '',
+      display_name: c.displayName || c.display_name || '',
+      description: c.description,
+      guidelines: c.guidelines,
+      admins: (c.admins || []).map((a: any) =>
+        typeof a === 'string'
+          ? { did: a, permissions: [], addedAt: '' }
+          : {
+              did: a.did,
+              permissions: a.permissions || [],
+              addedAt: a.addedAt || '',
+            }
+      ),
+      created_at: c.createdAt || c.created_at || '',
+    },
+    is_admin: data.isAdmin,
+  };
 }
 
 /**
