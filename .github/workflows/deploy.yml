@@ -24,11 +24,11 @@ jobs:
             - run: |
                   docker build -t ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }} .
                   docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }}
-            - uses: azure/container-apps-deploy-action@v2
-              with:
-                  containerAppName: collective-social-api
-                  resourceGroup: open-collective-social
-                  imageToDeploy: ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }}
-                  environmentVariables: >-
-                      OPENSOCIAL_SIGNING_KEY=${{ secrets.OPENSOCIAL_SIGNING_KEY }}
+            - run: |
+                  az containerapp update \
+                    --name collective-social-api \
+                    --resource-group open-collective-social \
+                    --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }} \
+                    --set-env-vars \
+                      OPENSOCIAL_SIGNING_KEY=${{ secrets.OPENSOCIAL_SIGNING_KEY }} \
                       OPENSOCIAL_KEY_ID=${{ secrets.OPENSOCIAL_KEY_ID }}
