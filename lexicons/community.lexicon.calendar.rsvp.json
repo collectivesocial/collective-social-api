@@ -1,0 +1,31 @@
+{
+  "lexicon": 1,
+  "id": "community.lexicon.calendar.rsvp",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "An RSVP to a calendar event. Stored in the user's own PDS repo (not the community repo).",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subject", "status"],
+        "properties": {
+          "subject": {
+            "type": "ref",
+            "ref": "app.collectivesocial.strongRef",
+            "description": "Reference to the event being RSVPed to (uri + cid)"
+          },
+          "status": {
+            "type": "string",
+            "knownValues": [
+              "community.lexicon.calendar.rsvp#going",
+              "community.lexicon.calendar.rsvp#interested",
+              "community.lexicon.calendar.rsvp#notgoing"
+            ],
+            "description": "RSVP status"
+          }
+        }
+      }
+    }
+  }
+}

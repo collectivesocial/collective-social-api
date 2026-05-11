@@ -36,6 +36,7 @@ export interface EventRecord {
   endsAt?: string;
   mode?: string;
   status?: string;
+  segmentUri?: string;
   locations?: Array<{
     name?: string;
     locality?: string;
@@ -82,6 +83,7 @@ export async function createEvent(
     endsAt?: string;
     mode?: 'virtual' | 'inperson' | 'hybrid';
     status?: 'scheduled' | 'cancelled' | 'postponed';
+    segmentUri?: string;
     locations?: EventRecord['locations'];
     uris?: EventRecord['uris'];
   }
@@ -99,6 +101,7 @@ export async function createEvent(
   if (data.mode) record.mode = `${COL_EVENT}#${data.mode}`;
   if (data.status) record.status = `${COL_EVENT}#${data.status}`;
   else record.status = `${COL_EVENT}#scheduled`;
+  if (data.segmentUri) record.segmentUri = data.segmentUri;
   if (data.locations?.length) record.locations = data.locations;
   if (data.uris?.length) record.uris = data.uris;
 
@@ -122,9 +125,53 @@ export async function createEvent(
     status: data.status
       ? `${COL_EVENT}#${data.status}`
       : `${COL_EVENT}#scheduled`,
+    segmentUri: data.segmentUri,
     locations: data.locations,
     uris: data.uris,
     createdAt: now,
+  };
+}
+
+/**
+ * Find an event linked to a specific segment URI.
+ * Returns the first matching event or null.
+ */
+export async function findEventBySegmentUri(
+  communityDid: string,
+  segmentUri: string,
+  db: Kysely<any>
+): Promise<(EventRecord & { rsvpCounts: Record<RsvpStatus, number> }) | null> {
+  const allEvents = await opensocial.listAllCommunityRecords(
+    communityDid,
+    COL_EVENT
+  );
+  const match = allEvents.find((e: any) => e.value.segmentUri === segmentUri);
+  if (!match) return null;
+
+  const rkey = match.uri.split('/').pop()!;
+
+  const rsvpRows = await db
+    .selectFrom('event_rsvps')
+    .select(['status'])
+    .where('event_uri', '=', match.uri)
+    .execute();
+
+  const counts: Record<string, number> = {
+    going: 0,
+    interested: 0,
+    notgoing: 0,
+  };
+  for (const row of rsvpRows) {
+    const shortStatus = parseRsvpStatus(row.status);
+    counts[shortStatus] = (counts[shortStatus] ?? 0) + 1;
+  }
+
+  return {
+    uri: match.uri,
+    cid: match.cid,
+    rkey,
+    ...(match.value as any),
+    rsvpCounts: counts as Record<RsvpStatus, number>,
   };
 }
 
@@ -226,6 +273,7 @@ export async function updateEvent(
     endsAt: string;
     mode: 'virtual' | 'inperson' | 'hybrid';
     status: 'scheduled' | 'cancelled' | 'postponed';
+    segmentUri: string;
     locations: EventRecord['locations'];
     uris: EventRecord['uris'];
   }>
@@ -243,6 +291,7 @@ export async function updateEvent(
   if (data.endsAt !== undefined) merged.endsAt = data.endsAt;
   if (data.mode !== undefined) merged.mode = `${COL_EVENT}#${data.mode}`;
   if (data.status !== undefined) merged.status = `${COL_EVENT}#${data.status}`;
+  if (data.segmentUri !== undefined) merged.segmentUri = data.segmentUri;
   if (data.locations !== undefined) merged.locations = data.locations;
   if (data.uris !== undefined) merged.uris = data.uris;
 

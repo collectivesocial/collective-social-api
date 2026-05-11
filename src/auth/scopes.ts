@@ -10,4 +10,4 @@
  * .squad/decisions/inbox/simon-nsid-scopes.md
  */
 export const COLLECTIVE_SCOPES =
-  'atproto repo:app.collectivesocial.feed.list repo:app.collectivesocial.feed.listitem repo:app.collectivesocial.feed.useritem repo:app.collectivesocial.feed.review repo:app.collectivesocial.feed.completion repo:app.collectivesocial.feed.comment repo:app.collectivesocial.feed.react repo:app.collectivesocial.feed.reviewsegment repo:app.collectivesocial.feed.goal repo:app.collectivesocial.feed.grouppost';
+  'atproto repo:app.collectivesocial.feed.list repo:app.collectivesocial.feed.listitem repo:app.collectivesocial.feed.useritem repo:app.collectivesocial.feed.review repo:app.collectivesocial.feed.completion repo:app.collectivesocial.feed.comment repo:app.collectivesocial.feed.react repo:app.collectivesocial.feed.reviewsegment repo:app.collectivesocial.feed.goal repo:app.collectivesocial.feed.grouppost repo:community.lexicon.calendar.rsvp';
