@@ -1,8 +1,11 @@
 import express, { Request, Response } from 'express';
+import { Agent } from '@atproto/api';
 import { getUserByHandle } from '../models/user';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
+
+const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -19,22 +22,34 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const profile = await agent.getProfile({ actor: agent.did! });
+        // Use public API for profile — avoids OAuth scope / PDS proxy issues
+        const profile = await publicAgent.getProfile({ actor: agent.did! });
 
-        // Get collection count
-        const collectionsResponse =
-          await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.list',
-          });
-        const collectionCount = collectionsResponse.data.records.length;
+        // Get collection count (needs auth to read user's repo)
+        let collectionCount = 0;
+        try {
+          const collectionsResponse =
+            await agent.api.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.list',
+            });
+          collectionCount = collectionsResponse.data.records.length;
+        } catch (err) {
+          ctx.logger.warn({ err }, 'Failed to fetch collection count');
+        }
 
         // Get review count
-        const reviewCount = await ctx.db
-          .selectFrom('reviews')
-          .select(({ fn }) => [fn.countAll().as('count')])
-          .where('authorDid', '=', agent.did!)
-          .executeTakeFirst();
+        let reviewCount = 0;
+        try {
+          const result = await ctx.db
+            .selectFrom('reviews')
+            .select(({ fn }) => [fn.countAll().as('count')])
+            .where('authorDid', '=', agent.did!)
+            .executeTakeFirst();
+          reviewCount = Number(result?.count || 0);
+        } catch (err) {
+          ctx.logger.warn({ err }, 'Failed to fetch review count');
+        }
 
         res.json({
           did: profile.data.did,
@@ -44,7 +59,7 @@ export const createRouter = (ctx: AppContext) => {
           description: profile.data.description,
           followerCount: profile.data.followersCount,
           collectionCount,
-          reviewCount: Number(reviewCount?.count || 0),
+          reviewCount,
         });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to fetch profile');
@@ -64,14 +79,20 @@ export const createRouter = (ctx: AppContext) => {
       const handle = Array.isArray(req.params.handle)
         ? req.params.handle[0]
         : req.params.handle;
-      const profile = await agent.getProfile({ actor: handle });
+      // Use public API for profile — avoids OAuth scope / PDS proxy issues
+      const profile = await publicAgent.getProfile({ actor: handle });
 
-      // Get collection count
-      const collectionsResponse = await agent.api.com.atproto.repo.listRecords({
-        repo: profile.data.did,
-        collection: 'app.collectivesocial.feed.list',
-      });
-      const collectionCount = collectionsResponse.data.records.length;
+      // Get collection count (needs auth to read user's repo)
+      let collectionCount = 0;
+      try {
+        const collectionsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: profile.data.did,
+          collection: 'app.collectivesocial.feed.list',
+        });
+        collectionCount = collectionsResponse.data.records.length;
+      } catch (err) {
+        ctx.logger.warn({ err }, 'Failed to fetch collection count');
+      }
 
       // Get review count
       const user = await ctx.db
@@ -79,12 +100,17 @@ export const createRouter = (ctx: AppContext) => {
         .where('did', '=', profile.data.did)
         .executeTakeFirst();
 
-      // Get review count
-      const reviewCount = await ctx.db
-        .selectFrom('reviews')
-        .select(({ fn }) => [fn.countAll().as('count')])
-        .where('authorDid', '=', profile.data.did)
-        .executeTakeFirst();
+      let reviewCount = 0;
+      try {
+        const result = await ctx.db
+          .selectFrom('reviews')
+          .select(({ fn }) => [fn.countAll().as('count')])
+          .where('authorDid', '=', profile.data.did)
+          .executeTakeFirst();
+        reviewCount = Number(result?.count || 0);
+      } catch (err) {
+        ctx.logger.warn({ err }, 'Failed to fetch review count');
+      }
 
       res.json({
         did: profile.data.did,
@@ -94,7 +120,7 @@ export const createRouter = (ctx: AppContext) => {
         description: profile.data.description,
         followerCount: profile.data.followersCount,
         collectionCount,
-        reviewCount: Number(reviewCount?.count || 0),
+        reviewCount,
         isInDatabase: user ? true : false,
       });
     } catch (err) {
