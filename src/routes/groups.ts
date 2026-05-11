@@ -5,6 +5,17 @@ import { getSessionAgent } from '../auth/agent';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri, resolveUserPermissions } from '../services/opensocial';
 import type { ResolvedCollectionPermission } from '../services/opensocial';
+import { config } from '../config';
+
+/** HTML-escape user-controlled strings for safe inclusion in OG meta tags. */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -167,6 +178,103 @@ export const createRouter = (ctx: AppContext) => {
         console.error('Error listing user communities:', err.message);
         return res.status(err.status || 500).json({ error: err.message });
       }
+    })
+  );
+
+  /**
+   * GET /groups/:did/share
+   *
+   * Public, unauthenticated landing endpoint optimized for link previews on
+   * platforms like Bluesky, Mastodon, Slack, etc. Returns an HTML page with
+   * Open Graph and Twitter Card meta tags (display name, description, avatar)
+   * and then redirects the browser to the SPA at `${clientUrl}/groups/:did`.
+   *
+   * Bluesky's link unfurler hits this endpoint, reads the meta tags, and
+   * shows a rich card. Real users get bounced through to the React app via
+   * `<meta http-equiv="refresh">` + a JS fallback.
+   */
+  router.get(
+    '/:did/share',
+    handler(async (req: Request, res: Response) => {
+      const did = req.params.did as string;
+      const clientUrl = config.clientUrl || 'http://127.0.0.1:5173';
+      const targetUrl = `${clientUrl}/groups/${encodeURIComponent(did)}`;
+
+      // Render a minimal HTML preview. Falls back to generic copy if the
+      // community can't be loaded so crawlers still get *something* useful.
+      let title = 'Join this group on Collective';
+      let description =
+        'Discover and join book clubs, watch parties, and more on Collective.';
+      let imageUrl = '';
+      let pageUrl = targetUrl;
+
+      try {
+        const { community } = await opensocial.getCommunity(did);
+        const displayName = community.display_name || community.handle;
+        title = `Join ${displayName} on Collective`;
+        if (community.description && community.description.trim().length > 0) {
+          description = community.description.trim();
+        } else {
+          description = `Join @${community.handle} on Collective \u2014 a community for tracking and sharing what you read, watch, and listen to.`;
+        }
+        if (community.avatar) imageUrl = community.avatar;
+        // Prefer the canonical service URL when we have one so unfurlers
+        // resolve canonical/og:url to a stable host.
+        pageUrl = config.serviceUrl
+          ? `${config.serviceUrl}/groups/${encodeURIComponent(did)}/share`
+          : pageUrl;
+      } catch (err: any) {
+        ctx.logger.warn(
+          { err: err?.message, did },
+          'Could not load community for share preview \u2014 serving generic OG tags'
+        );
+      }
+
+      const safeTitle = escapeHtml(title);
+      const safeDescription = escapeHtml(description);
+      const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : '';
+      const safePageUrl = escapeHtml(pageUrl);
+      const safeTargetUrl = escapeHtml(targetUrl);
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeTitle}</title>
+  <meta name="description" content="${safeDescription}">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${safePageUrl}">
+  <meta property="og:title" content="${safeTitle}">
+  <meta property="og:description" content="${safeDescription}">
+  <meta property="og:site_name" content="Collective">
+  ${
+    safeImageUrl
+      ? `<meta property="og:image" content="${safeImageUrl}">
+  <meta property="og:image:alt" content="${safeTitle}">`
+      : ''
+  }
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="${safeImageUrl ? 'summary_large_image' : 'summary'}">
+  <meta name="twitter:url" content="${safePageUrl}">
+  <meta name="twitter:title" content="${safeTitle}">
+  <meta name="twitter:description" content="${safeDescription}">
+  ${safeImageUrl ? `<meta name="twitter:image" content="${safeImageUrl}">` : ''}
+
+  <!-- Send real users on to the SPA -->
+  <meta http-equiv="refresh" content="0;url=${safeTargetUrl}">
+  <link rel="canonical" href="${safeTargetUrl}">
+  <script>window.location.replace(${JSON.stringify(targetUrl)});</script>
+</head>
+<body>
+  <p>Redirecting to <a href="${safeTargetUrl}">Collective</a>...</p>
+</body>
+</html>`;
+
+      return res.type('html').send(html);
     })
   );
 
