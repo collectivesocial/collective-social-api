@@ -36,6 +36,7 @@ interface Community {
   pds_host: string;
   created_at: string;
   is_admin: boolean;
+  avatar?: string | null;
 }
 
 interface CommunityDetail {

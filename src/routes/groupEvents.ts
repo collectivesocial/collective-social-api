@@ -15,6 +15,7 @@ import { handler } from '../lib/http';
 import {
   requireGroupMember,
   requireGroupAdmin,
+  optionalGroupMember,
   GroupAuthRequest,
 } from '../middleware/groupAuth';
 import { getSessionAgent } from '../auth/agent';
@@ -28,6 +29,11 @@ export const createRouter = (ctx: AppContext) => {
 
   const memberOnly = requireGroupMember(ctx);
   const adminOnly = requireGroupAdmin(ctx);
+  // Public-readable middleware: resolves membership state without rejecting
+  // anonymous or non-member callers. Used on event read endpoints so that
+  // visitors can see what events are happening, while we strip sensitive
+  // fields (join links) from the response for non-members below.
+  const anyVisitor = optionalGroupMember(ctx);
 
   // ═══════════════════════════════════════════════════════════════
   // EVENT CRUD
@@ -94,20 +100,27 @@ export const createRouter = (ctx: AppContext) => {
 
   /**
    * GET /groups/:communityDid/events
-   * List all events with RSVP aggregates. Any member can read.
+   * List all events with RSVP aggregates.
+   *
+   * Public-readable so non-members (and anonymous visitors) can see what's
+   * scheduled, but join links (`uris[]`) are stripped from the response for
+   * non-members to keep them member-gated.
    */
   router.get(
     '/',
-    memberOnly,
+    anyVisitor,
     handler(async (req: GroupAuthRequest, res: Response) => {
-      const { communityDid } = req.groupAuth!;
+      const { communityDid, isMember } = req.groupAuth!;
 
       try {
         const events = await groupEventsService.listEvents(
           communityDid,
           ctx.db
         );
-        return res.json({ events });
+        const sanitized = isMember
+          ? events
+          : events.map((e) => ({ ...e, uris: undefined }));
+        return res.json({ events: sanitized });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to list events');
         return res.status(500).json({ error: 'Failed to list events' });
@@ -118,12 +131,15 @@ export const createRouter = (ctx: AppContext) => {
   /**
    * GET /groups/:communityDid/events/:eventRkey
    * Single event detail with RSVP counts.
+   *
+   * Same public-readable contract as the list endpoint: anyone can read,
+   * non-members get the response with `uris[]` stripped.
    */
   router.get(
     '/:eventRkey',
-    memberOnly,
+    anyVisitor,
     handler(async (req: GroupAuthRequest, res: Response) => {
-      const { communityDid } = req.groupAuth!;
+      const { communityDid, isMember } = req.groupAuth!;
       const eventRkey = req.params.eventRkey as string;
 
       try {
@@ -135,7 +151,8 @@ export const createRouter = (ctx: AppContext) => {
         if (!event) {
           return res.status(404).json({ error: 'Event not found' });
         }
-        return res.json({ event });
+        const sanitized = isMember ? event : { ...event, uris: undefined };
+        return res.json({ event: sanitized });
       } catch (err) {
         ctx.logger.error({ err }, 'Failed to get event');
         return res.status(500).json({ error: 'Failed to get event' });

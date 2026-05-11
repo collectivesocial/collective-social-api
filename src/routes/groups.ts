@@ -89,6 +89,7 @@ export const createRouter = (ctx: AppContext) => {
             display_name: c.display_name || c.displayName || null,
             description: null,
             type: c.type || 'open',
+            avatar: c.avatar ?? null,
             created_at: c.created_at || c.createdAt || null,
             is_admin: c.is_admin ?? c.isAdmin ?? false,
             is_member: memberCommunityDids.has(c.did),
@@ -137,45 +138,95 @@ export const createRouter = (ctx: AppContext) => {
           return res.json({ communities: [] });
         }
 
-        // Enrich each membership with community details in parallel.
-        const enriched = await Promise.all(
-          Array.from(memberCommunityDids).map(async (did) => {
-            try {
-              const { community, is_admin } = await opensocial.getCommunity(
-                did,
-                agent.did!
-              );
-              // The XRPC response actually uses camelCase keys; alias both for
-              // backward compatibility with the existing list response shape.
-              const c = community as any;
-              return {
-                did: c.did,
-                handle: c.handle,
-                pds_host: c.pds_host || c.pdsHost || null,
-                display_name: c.display_name || c.displayName || null,
-                description: c.description || null,
-                type: c.type || 'open',
-                created_at: c.created_at || c.createdAt || null,
-                is_admin,
-                is_member: true,
-              };
-            } catch (err: any) {
-              console.warn(
-                `Failed to fetch community ${did} for /groups/mine:`,
-                err.message
-              );
-              return null;
+        // Enrich each membership with community details in parallel. We also
+        // track communities that the OpenSocial API refuses to return (typically
+        // because the community admin has disabled or not yet approved this
+        // app's visibility), so the UI can surface "you're a member but the
+        // community isn't accessible here" rather than silently hiding it.
+        type Enriched = {
+          did: string;
+          handle: string;
+          pds_host: string | null;
+          display_name: string | null;
+          description: string | null;
+          type: string;
+          created_at: string | null;
+          is_admin: boolean;
+          is_member: boolean;
+        };
+        type Inaccessible = {
+          did: string;
+          status: number | null;
+          reason: string;
+        };
+
+        const settled = await Promise.all(
+          Array.from(memberCommunityDids).map(
+            async (
+              did
+            ): Promise<
+              | { kind: 'ok'; community: Enriched }
+              | { kind: 'inaccessible'; entry: Inaccessible }
+            > => {
+              try {
+                const { community, is_admin } = await opensocial.getCommunity(
+                  did,
+                  agent.did!
+                );
+                // The XRPC response actually uses camelCase keys; alias both for
+                // backward compatibility with the existing list response shape.
+                const c = community as any;
+                return {
+                  kind: 'ok',
+                  community: {
+                    did: c.did,
+                    handle: c.handle,
+                    pds_host: c.pds_host || c.pdsHost || null,
+                    display_name: c.display_name || c.displayName || null,
+                    description: c.description || null,
+                    type: c.type || 'open',
+                    created_at: c.created_at || c.createdAt || null,
+                    is_admin,
+                    is_member: true,
+                  },
+                };
+              } catch (err: any) {
+                // Use structured logging so the actual reason is visible. The
+                // most common cause is OpenSocial's per-app visibility check
+                // (HTTP 403 PermissionDenied), which means atmosphere.community
+                // (or similar) hasn't enabled Collective Social as an app.
+                const status: number | null =
+                  typeof err?.status === 'number' ? err.status : null;
+                const reason: string =
+                  typeof err?.message === 'string'
+                    ? err.message
+                    : 'Unknown error fetching community';
+                ctx.logger.warn(
+                  { err, did, status, reason },
+                  'Skipping inaccessible community in /groups/mine'
+                );
+                return {
+                  kind: 'inaccessible',
+                  entry: { did, status, reason },
+                };
+              }
             }
-          })
+          )
         );
 
-        const communities = enriched.filter(
-          (c): c is NonNullable<typeof c> => c !== null
-        );
+        const communities: Enriched[] = [];
+        const inaccessibleCommunities: Inaccessible[] = [];
+        for (const r of settled) {
+          if (r.kind === 'ok') communities.push(r.community);
+          else inaccessibleCommunities.push(r.entry);
+        }
 
-        return res.json({ communities });
+        return res.json({ communities, inaccessibleCommunities });
       } catch (err: any) {
-        console.error('Error listing user communities:', err.message);
+        ctx.logger.error(
+          { err },
+          'Error listing user communities in /groups/mine'
+        );
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
