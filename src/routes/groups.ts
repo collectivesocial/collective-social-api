@@ -9,7 +9,11 @@ import type { ResolvedCollectionPermission } from '../services/opensocial';
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
 
-  // GET /groups — list all communities from OpenSocial (enriched with display names)
+  // GET /groups — list communities from OpenSocial (enriched with display names).
+  // Supports pagination via `limit` and `cursor` query params. Default page size
+  // is 10 for the default discover list; clients may request a larger limit
+  // (e.g. when running a search). Returns a `cursor` for the next page when
+  // more results are available.
   router.get(
     '/',
     handler(async (req: Request, res: Response) => {
@@ -21,7 +25,26 @@ export const createRouter = (ctx: AppContext) => {
           typeof req.query.query === 'string'
             ? req.query.query.trim()
             : undefined;
-        const communities = await opensocial.listCommunities(userDid, query);
+        const cursor =
+          typeof req.query.cursor === 'string' && req.query.cursor.length > 0
+            ? req.query.cursor
+            : undefined;
+        const parsedLimit =
+          typeof req.query.limit === 'string'
+            ? parseInt(req.query.limit, 10)
+            : NaN;
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(parsedLimit, 100)
+            : 10;
+
+        const { communities, cursor: nextCursor } =
+          await opensocial.listCommunities({
+            userDid,
+            query,
+            limit,
+            cursor,
+          });
 
         // If user is authenticated, check which communities they're a member of
         const memberCommunityDids = new Set<string>();
@@ -43,18 +66,105 @@ export const createRouter = (ctx: AppContext) => {
           }
         }
 
-        // display_name comes from the list endpoint directly;
-        // description is only available on the detail view.
-        const result = communities.map((community) => ({
-          ...community,
-          display_name: community.display_name || null,
-          description: null,
-          is_member: memberCommunityDids.has(community.did),
-        }));
+        // The OpenSocial XRPC returns camelCase keys (displayName, isAdmin,
+        // createdAt). Map them back to the snake_case shape that the web
+        // client (and our Community interface) expects.
+        const result = communities.map((community) => {
+          const c = community as any;
+          return {
+            did: c.did,
+            handle: c.handle,
+            pds_host: c.pds_host || c.pdsHost || null,
+            display_name: c.display_name || c.displayName || null,
+            description: null,
+            type: c.type || 'open',
+            created_at: c.created_at || c.createdAt || null,
+            is_admin: c.is_admin ?? c.isAdmin ?? false,
+            is_member: memberCommunityDids.has(c.did),
+          };
+        });
 
-        return res.json({ communities: result });
+        return res.json({ communities: result, cursor: nextCursor });
       } catch (err: any) {
         ctx.logger.error({ err }, 'Error listing communities');
+        return res.status(err.status || 500).json({ error: err.message });
+      }
+    })
+  );
+
+  // GET /groups/mine — list communities the authenticated user is a member of.
+  // Reads the user's membership records from their PDS, then enriches each with
+  // community details. Not paginated — assumes a user belongs to a manageable
+  // number of communities.
+  router.get(
+    '/mine',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        // Collect every membership DID from the user's PDS.
+        const memberCommunityDids = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const resp = await agent.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'community.opensocial.membership',
+            limit: 100,
+            cursor,
+          });
+          for (const record of resp.data.records) {
+            const value = record.value as { community?: string };
+            if (value.community) memberCommunityDids.add(value.community);
+          }
+          cursor = resp.data.cursor;
+        } while (cursor);
+
+        if (memberCommunityDids.size === 0) {
+          return res.json({ communities: [] });
+        }
+
+        // Enrich each membership with community details in parallel.
+        const enriched = await Promise.all(
+          Array.from(memberCommunityDids).map(async (did) => {
+            try {
+              const { community, is_admin } = await opensocial.getCommunity(
+                did,
+                agent.did!
+              );
+              // The XRPC response actually uses camelCase keys; alias both for
+              // backward compatibility with the existing list response shape.
+              const c = community as any;
+              return {
+                did: c.did,
+                handle: c.handle,
+                pds_host: c.pds_host || c.pdsHost || null,
+                display_name: c.display_name || c.displayName || null,
+                description: c.description || null,
+                type: c.type || 'open',
+                created_at: c.created_at || c.createdAt || null,
+                is_admin,
+                is_member: true,
+              };
+            } catch (err: any) {
+              console.warn(
+                `Failed to fetch community ${did} for /groups/mine:`,
+                err.message
+              );
+              return null;
+            }
+          })
+        );
+
+        const communities = enriched.filter(
+          (c): c is NonNullable<typeof c> => c !== null
+        );
+
+        return res.json({ communities });
+      } catch (err: any) {
+        console.error('Error listing user communities:', err.message);
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -105,7 +215,10 @@ export const createRouter = (ctx: AppContext) => {
             isMember = membership.isMember;
             isAdmin = membership.isAdmin;
           } catch (memberErr: any) {
-            ctx.logger.warn({ err: memberErr, communityDid: did }, 'Membership check failed');
+            ctx.logger.warn(
+              { err: memberErr, communityDid: did },
+              'Membership check failed'
+            );
             // Not a member or check failed — that's fine for public view
           }
         }
@@ -120,18 +233,48 @@ export const createRouter = (ctx: AppContext) => {
           did,
           COL_LIST
         );
-        const lists = listRecords
-          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
-          .sort(
-            (a: any, b: any) =>
-              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
 
         // Fetch in-progress items across all lists
         const [allItems, allStatuses] = await Promise.all([
           opensocial.listAllCommunityRecords(did, COL_LISTITEM),
           opensocial.listAllCommunityRecords(did, COL_LISTITEM_STATUS),
         ]);
+
+        // Tally items per list so the UI can show "n items" on each list card.
+        const itemCountsByList = new Map<string, number>();
+        for (const item of allItems) {
+          const listUri = (item.value as { listUri?: string }).listUri;
+          if (!listUri) continue;
+          itemCountsByList.set(
+            listUri,
+            (itemCountsByList.get(listUri) ?? 0) + 1
+          );
+        }
+
+        // Sort lists by explicit `order` first (admin-set drag-and-drop
+        // ordering), falling back to creation time descending for lists that
+        // pre-date the `order` field.
+        const lists = listRecords
+          .map((r) => {
+            const value = r.value as Record<string, any>;
+            return {
+              uri: r.uri,
+              rkey: rkeyFromUri(r.uri),
+              ...value,
+              item_count: itemCountsByList.get(r.uri) ?? 0,
+            };
+          })
+          .sort((a: any, b: any) => {
+            const aHasOrder = typeof a.order === 'number';
+            const bHasOrder = typeof b.order === 'number';
+            if (aHasOrder && bHasOrder) return a.order - b.order;
+            if (aHasOrder) return -1;
+            if (bHasOrder) return 1;
+            return (
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+          });
+
         const inProgressItemUris = new Set(
           allStatuses
             .filter((s: any) => s.value.status === 'in-progress')
@@ -162,7 +305,10 @@ export const createRouter = (ctx: AppContext) => {
         try {
           permissions = await resolveUserPermissions(did, userDid);
         } catch (permErr: any) {
-          ctx.logger.warn({ err: permErr, communityDid: did }, 'Failed to resolve permissions');
+          ctx.logger.warn(
+            { err: permErr, communityDid: did },
+            'Failed to resolve permissions'
+          );
         }
 
         return res.json({
@@ -212,7 +358,13 @@ export const createRouter = (ctx: AppContext) => {
     })
   );
 
-  // POST /groups/:did/join — get join info, then write membership record
+  // POST /groups/:did/join — record a join through OpenSocial and write the
+  // matching membership record into the user's PDS.
+  //
+  // Recovery: if OpenSocial returns 409 AlreadyMember (because a prior attempt
+  // wrote the proof to the community's PDS but failed before writing to the
+  // user's PDS), we still check the user's PDS and create the missing
+  // `community.opensocial.membership` record so the two stores stay in sync.
   router.post(
     '/:did/join',
     handler(async (req: Request, res: Response) => {
@@ -222,30 +374,105 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const did = req.params.did as string;
+      const MEMBERSHIP_COLLECTION = 'community.opensocial.membership';
+
+      // Check whether the user already has a local membership record for this
+      // community. Used both as an optimization and as part of the AlreadyMember
+      // recovery flow below.
+      const hasLocalMembershipRecord = async (): Promise<boolean> => {
+        try {
+          let cursor: string | undefined;
+          do {
+            const resp = await agent.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: MEMBERSHIP_COLLECTION,
+              limit: 100,
+              cursor,
+            });
+            const found = resp.data.records.some(
+              (r) => (r.value as { community?: string }).community === did
+            );
+            if (found) return true;
+            cursor = resp.data.cursor;
+          } while (cursor);
+        } catch (err) {
+          console.warn('Failed to list local membership records:', err);
+        }
+        return false;
+      };
+
+      // Write the membership record into the user's PDS.
+      const writeLocalMembership = async (): Promise<void> => {
+        await agent.com.atproto.repo.createRecord({
+          repo: agent.did!,
+          collection: MEMBERSHIP_COLLECTION,
+          record: {
+            $type: MEMBERSHIP_COLLECTION,
+            community: did,
+            joinedAt: new Date().toISOString(),
+          },
+        });
+      };
 
       try {
-        // Ask OpenSocial for the join record template
-        const joinInfo = await opensocial.joinCommunity(
+        const joinResp = await opensocial.joinCommunity(
           did,
           agent.did!,
           // Derive PDS host from the agent's DID doc, fallback to bsky.social
           'bsky.social'
         );
 
-        // Write the membership record into the user's repo
-        await agent.com.atproto.repo.createRecord({
-          repo: agent.did!,
-          collection: joinInfo.collection,
-          record: joinInfo.record,
-        });
+        if (joinResp.status === 'pending') {
+          return res.json({
+            success: true,
+            status: 'pending',
+            message: joinResp.message || 'Join request submitted for approval',
+          });
+        }
+
+        // 'joined' (or any non-pending success) — make sure the user's PDS
+        // has the matching membership record before we report success.
+        if (!(await hasLocalMembershipRecord())) {
+          await writeLocalMembership();
+        }
 
         return res.json({
           success: true,
-          community: joinInfo.community,
-          message: 'Joined community successfully',
+          status: 'joined',
+          message: joinResp.message || 'Joined community successfully',
         });
       } catch (err: any) {
-        ctx.logger.error({ err, communityDid: did }, 'Error joining community');
+        // Recovery path: the proof exists in the community PDS but a previous
+        // attempt didn't get the membership record written to the user's PDS.
+        // Treat this as a successful "complete the join" rather than an error.
+        const isAlreadyMember =
+          err?.status === 409 &&
+          (err?.message?.includes('Already a member') ||
+            err?.message?.includes('AlreadyMember'));
+
+        if (isAlreadyMember) {
+          try {
+            if (!(await hasLocalMembershipRecord())) {
+              await writeLocalMembership();
+            }
+            return res.json({
+              success: true,
+              status: 'joined',
+              message: 'Joined community successfully',
+              recovered: true,
+            });
+          } catch (recoveryErr: any) {
+            console.error(
+              'Failed to recover incomplete join:',
+              recoveryErr.message
+            );
+            return res
+              .status(500)
+              .json({ error: 'Failed to complete previous join attempt' });
+          }
+        }
+
+        console.error('Error joining community:', err.message);
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -266,7 +493,10 @@ export const createRouter = (ctx: AppContext) => {
         await opensocial.deleteCommunity(did, agent.did!);
         return res.json({ success: true, message: 'Community deleted' });
       } catch (err: any) {
-        ctx.logger.error({ err, communityDid: did }, 'Error deleting community');
+        ctx.logger.error(
+          { err, communityDid: did },
+          'Error deleting community'
+        );
         return res.status(err.status || 500).json({ error: err.message });
       }
     })

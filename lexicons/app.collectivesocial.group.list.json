@@ -30,6 +30,11 @@
             "enum": ["pages", "percent", "chapters"],
             "description": "How reading/watching segments are measured for items in this list"
           },
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional sort order for this list within the community. Lower values appear first; lists without an order fall back to creation time."
+          },
           "createdBy": {
             "type": "string",
             "format": "did",

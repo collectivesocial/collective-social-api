@@ -45,26 +45,34 @@ interface CommunityDetail {
   display_name: string;
   description?: string;
   guidelines?: string;
-  admins: Array<{
-    did: string;
-    permissions: string[];
-    addedAt: string;
-  }>;
+  type?: string;
+  avatar?: string | null;
+  banner?: string | null;
+  member_count?: number;
+  admins:
+    | Array<{
+        did: string;
+        permissions: string[];
+        addedAt: string;
+      }>
+    | string[];
   created_at: string;
 }
 
-interface JoinInfo {
-  action: string;
-  instructions: string;
-  record: {
-    $type: string;
-    community: string;
+/**
+ * Response from the OpenSocial joinCommunity XRPC procedure.
+ *
+ * Note: open-social writes the `membershipProof` record to the community's PDS
+ * synchronously before returning. The caller is responsible for writing the
+ * matching `community.opensocial.membership` record into the user's PDS.
+ */
+export interface JoinCommunityResponse {
+  status: 'joined' | 'pending' | string;
+  message: string;
+  membership?: {
+    communityDid: string;
+    memberDid: string;
     joinedAt: string;
-  };
-  collection: string;
-  community: {
-    handle: string;
-    did: string;
   };
 }
 
@@ -202,62 +210,60 @@ export async function listAllCommunityRecords<T = Record<string, unknown>>(
 /**
  * List all communities visible to this app.
  * Optionally pass a user DID to include is_admin flags.
+ * Supports cursor-based pagination.
  */
 export async function listCommunities(
-  userDid?: string,
-  query?: string
-): Promise<Community[]> {
-  const data = await xrpcQuery<{ communities: any[] }>(
+  opts: {
+    userDid?: string;
+    query?: string;
+    limit?: number;
+    cursor?: string;
+  } = {}
+): Promise<{ communities: Community[]; cursor?: string }> {
+  const data = await xrpcQuery<{ communities: Community[]; cursor?: string }>(
     'community.opensocial.searchCommunities',
-    { userDid, query, limit: 100 }
+    {
+      userDid: opts.userDid,
+      query: opts.query,
+      limit: opts.limit ?? 10,
+      cursor: opts.cursor,
+    }
   );
-  // Map XRPC camelCase fields to internal snake_case convention
-  return data.communities.map((c) => ({
-    did: c.did,
-    handle: c.handle,
-    display_name: c.displayName || c.display_name || '',
-    pds_host: c.pdsHost || c.pds_host || '',
-    created_at: c.createdAt || c.created_at || '',
-    is_admin: c.isAdmin ?? c.is_admin ?? false,
-    member_count: c.memberCount ?? c.member_count ?? 0,
-    type: c.type || 'open',
-  }));
+  return { communities: data.communities, cursor: data.cursor };
 }
 
 /**
  * Get full community details including profile + admins.
+ *
+ * The OpenSocial XRPC returns camelCase keys (`displayName`, `createdAt`,
+ * `memberCount`, `isAdmin`); normalize them to the snake_case shape that
+ * Collective Social's REST layer (and the web client) expects.
  */
 export async function getCommunity(
   did: string,
   userDid?: string
 ): Promise<{ community: CommunityDetail; is_admin: boolean }> {
   const data = await xrpcQuery<{
-    community: any;
+    community: Record<string, any>;
     isAdmin: boolean;
   }>('community.opensocial.getCommunity', { did, userDid });
-  // Map XRPC camelCase fields to internal snake_case convention
-  const c = data.community;
-  return {
-    community: {
-      did: c.did,
-      handle: c.handle,
-      pds_host: c.pdsHost || c.pds_host || '',
-      display_name: c.displayName || c.display_name || '',
-      description: c.description,
-      guidelines: c.guidelines,
-      admins: (c.admins || []).map((a: any) =>
-        typeof a === 'string'
-          ? { did: a, permissions: [], addedAt: '' }
-          : {
-              did: a.did,
-              permissions: a.permissions || [],
-              addedAt: a.addedAt || '',
-            }
-      ),
-      created_at: c.createdAt || c.created_at || '',
-    },
-    is_admin: data.isAdmin,
+
+  const c = data.community || {};
+  const community: CommunityDetail = {
+    did: c.did,
+    handle: c.handle,
+    pds_host: c.pds_host || c.pdsHost || '',
+    display_name: c.display_name || c.displayName || c.handle,
+    description: c.description ?? undefined,
+    guidelines: c.guidelines ?? undefined,
+    type: c.type ?? 'open',
+    avatar: c.avatar ?? null,
+    banner: c.banner ?? null,
+    member_count: c.member_count ?? c.memberCount ?? 0,
+    admins: c.admins ?? [],
+    created_at: c.created_at || c.createdAt || '',
   };
+  return { community, is_admin: data.isAdmin };
 }
 
 /**
@@ -289,14 +295,18 @@ export async function deleteCommunity(
 }
 
 /**
- * Get join information for a community.
- * Returns the record the client should write to the user's repo.
+ * Ask OpenSocial to record a join. For open communities this writes the
+ * `membershipProof` record into the community's PDS and returns
+ * `{ status: 'joined' }`. For admin-approved communities it returns
+ * `{ status: 'pending' }` instead. After a successful 'joined' response the
+ * caller must also write a `community.opensocial.membership` record into the
+ * user's own PDS.
  */
 export async function joinCommunity(
   communityDid: string,
   userDid: string,
   _userPdsHost: string
-): Promise<JoinInfo> {
+): Promise<JoinCommunityResponse> {
   return xrpcProcedure('community.opensocial.joinCommunity', {
     communityDid,
     userDid,

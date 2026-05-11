@@ -197,6 +197,78 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   /**
+   * PUT /groups/:communityDid/lists/reorder
+   * Bulk-update the display order of the community's lists. Admin only.
+   *
+   * Body: { order: string[] } — array of list rkeys in the new desired order.
+   * Lists not included in `order` are appended after, preserving their
+   * existing relative order.
+   */
+  router.put(
+    '/lists/reorder',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const { order } = req.body as { order?: unknown };
+
+      if (!Array.isArray(order) || order.some((r) => typeof r !== 'string')) {
+        return res
+          .status(400)
+          .json({ error: '`order` must be an array of list rkeys' });
+      }
+
+      // Fetch the current set of lists from the community PDS. Each list we
+      // need to update is read individually so we can merge the new `order`
+      // value with the rest of the existing record.
+      const allLists = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LIST
+      );
+      const byRkey = new Map(allLists.map((r) => [rkeyFromUri(r.uri), r]));
+
+      // Reject unknown rkeys up front rather than half-applying the change.
+      const unknown = (order as string[]).filter((rkey) => !byRkey.has(rkey));
+      if (unknown.length > 0) {
+        return res.status(404).json({
+          error: `Unknown list rkey(s): ${unknown.join(', ')}`,
+        });
+      }
+
+      // Apply the new order. Writes happen in parallel for speed; if any
+      // individual write fails the others still complete and we report the
+      // first error so the client can refetch and recover.
+      const updates = (order as string[]).map((rkey, index) => {
+        const existing = byRkey.get(rkey)!;
+        const updatedRecord = { ...existing.value, order: index };
+        return opensocial.updateCommunityRecord(
+          communityDid,
+          userDid,
+          COL_LIST,
+          rkey,
+          updatedRecord
+        );
+      });
+
+      const results = await Promise.allSettled(updates);
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+      );
+      if (failures.length > 0) {
+        ctx.logger.error(
+          { failures: failures.map((f) => f.reason?.message) },
+          'Some list reorder updates failed'
+        );
+        return res.status(500).json({
+          error: 'Failed to reorder some lists',
+          failedCount: failures.length,
+        });
+      }
+
+      return res.json({ success: true, count: order.length });
+    })
+  );
+
+  /**
    * PUT /groups/:communityDid/lists/:rkey
    * Update a list. Admin only.
    *
@@ -661,7 +733,10 @@ export const createRouter = (ctx: AppContext) => {
               .onConflict((oc) => oc.doNothing())
               .execute()
               .catch((err) => {
-                ctx.logger.warn({ err, segment_rkey: p.rkey }, 'Failed to backfill segment completion');
+                ctx.logger.warn(
+                  { err, segment_rkey: p.rkey },
+                  'Failed to backfill segment completion'
+                );
               });
           })
         );
@@ -1082,8 +1157,16 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(404).json({ error: 'No event for this segment' });
       }
 
-      const { name, description, startsAt, endsAt, mode, status, locations, uris } =
-        req.body;
+      const {
+        name,
+        description,
+        startsAt,
+        endsAt,
+        mode,
+        status,
+        locations,
+        uris,
+      } = req.body;
 
       try {
         const event = await groupEventsService.updateEvent(
@@ -1406,9 +1489,10 @@ export const createRouter = (ctx: AppContext) => {
 
       // Enrich with profiles
       const dids = completions.map((c) => c.user_did);
-      const profiles = dids.length > 0
-        ? await userProfileService.enrichWithUserProfiles(dids)
-        : {};
+      const profiles =
+        dids.length > 0
+          ? await userProfileService.enrichWithUserProfiles(dids)
+          : {};
 
       const roster = completions.map((c) => ({
         did: c.user_did,
@@ -1472,12 +1556,17 @@ export const createRouter = (ctx: AppContext) => {
               community_did: communityDid,
               segment_rkey: segmentRkey,
               user_did: userDid!,
-              completed_at: new Date(existingVal.createdAt || new Date().toISOString()),
+              completed_at: new Date(
+                existingVal.createdAt || new Date().toISOString()
+              ),
             })
             .onConflict((oc) => oc.doNothing())
             .execute()
             .catch((err) => {
-              ctx.logger.warn({ err, segment_rkey: segmentRkey }, 'Failed to backfill segment completion');
+              ctx.logger.warn(
+                { err, segment_rkey: segmentRkey },
+                'Failed to backfill segment completion'
+              );
             });
 
           return res.json({
@@ -1533,7 +1622,10 @@ export const createRouter = (ctx: AppContext) => {
           .onConflict((oc) => oc.doNothing())
           .execute();
       } catch (cacheErr) {
-        ctx.logger.warn({ err: cacheErr }, 'Failed to cache segment completion');
+        ctx.logger.warn(
+          { err: cacheErr },
+          'Failed to cache segment completion'
+        );
       }
 
       // ── Sync to personal progress ──────────────────────────────
@@ -1649,7 +1741,10 @@ export const createRouter = (ctx: AppContext) => {
           .where('user_did', '=', userDid!)
           .execute();
       } catch (cacheErr) {
-        ctx.logger.warn({ err: cacheErr }, 'Failed to remove cached completion');
+        ctx.logger.warn(
+          { err: cacheErr },
+          'Failed to remove cached completion'
+        );
       }
 
       return res.json({ success: true });
