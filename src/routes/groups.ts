@@ -39,7 +39,7 @@ export const createRouter = (ctx: AppContext) => {
               }
             }
           } catch (err) {
-            console.warn('Could not fetch user memberships:', err);
+            ctx.logger.warn({ err }, 'Could not fetch user memberships');
           }
         }
 
@@ -54,7 +54,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ communities: result });
       } catch (err: any) {
-        console.error('Error listing communities:', err.message);
+        ctx.logger.error({ err }, 'Error listing communities');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -77,7 +77,7 @@ export const createRouter = (ctx: AppContext) => {
         const permissions = await resolveUserPermissions(did, userDid);
         return res.json({ permissions });
       } catch (err: any) {
-        console.error('Error resolving permissions:', err.message);
+        ctx.logger.error({ err }, 'Error resolving permissions');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -105,10 +105,7 @@ export const createRouter = (ctx: AppContext) => {
             isMember = membership.isMember;
             isAdmin = membership.isAdmin;
           } catch (memberErr: any) {
-            console.error(
-              `Membership check failed for ${did}:`,
-              memberErr.message || memberErr
-            );
+            ctx.logger.warn({ err: memberErr, communityDid: did }, 'Membership check failed');
             // Not a member or check failed — that's fine for public view
           }
         }
@@ -165,7 +162,7 @@ export const createRouter = (ctx: AppContext) => {
         try {
           permissions = await resolveUserPermissions(did, userDid);
         } catch (permErr: any) {
-          console.warn('Failed to resolve permissions:', permErr.message);
+          ctx.logger.warn({ err: permErr, communityDid: did }, 'Failed to resolve permissions');
         }
 
         return res.json({
@@ -178,7 +175,7 @@ export const createRouter = (ctx: AppContext) => {
           in_progress_items: inProgressItems,
         });
       } catch (err: any) {
-        console.error('Error getting community:', err.message);
+        ctx.logger.error({ err, communityDid: did }, 'Error getting community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -209,7 +206,7 @@ export const createRouter = (ctx: AppContext) => {
         });
         return res.json(data);
       } catch (err: any) {
-        console.error('Error creating community:', err.message);
+        ctx.logger.error({ err }, 'Error creating community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -248,7 +245,7 @@ export const createRouter = (ctx: AppContext) => {
           message: 'Joined community successfully',
         });
       } catch (err: any) {
-        console.error('Error joining community:', err.message);
+        ctx.logger.error({ err, communityDid: did }, 'Error joining community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -269,7 +266,7 @@ export const createRouter = (ctx: AppContext) => {
         await opensocial.deleteCommunity(did, agent.did!);
         return res.json({ success: true, message: 'Community deleted' });
       } catch (err: any) {
-        console.error('Error deleting community:', err.message);
+        ctx.logger.error({ err, communityDid: did }, 'Error deleting community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })

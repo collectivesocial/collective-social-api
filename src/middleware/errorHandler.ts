@@ -4,6 +4,7 @@ import type { AppContext } from '../context';
 /**
  * Global error handler middleware.
  * Catches all errors forwarded by route handlers and returns a consistent JSON response.
+ * Returns a structured { error, code } shape so the frontend can display actionable messages.
  * Stack traces are only included in development mode.
  */
 export function createErrorHandler(ctx: AppContext) {
@@ -20,8 +21,22 @@ export function createErrorHandler(ctx: AppContext) {
       'Unhandled error'
     );
 
+    const code =
+      status === 400
+        ? 'BAD_REQUEST'
+        : status === 401
+          ? 'UNAUTHORIZED'
+          : status === 403
+            ? 'FORBIDDEN'
+            : status === 404
+              ? 'NOT_FOUND'
+              : status === 429
+                ? 'RATE_LIMITED'
+                : 'SERVER_ERROR';
+
     res.status(status).json({
       error: status >= 500 ? 'Internal server error' : err.message,
+      code,
       ...(ctx.logger.level === 'debug' || process.env.NODE_ENV !== 'production'
         ? { stack: err.stack }
         : {}),

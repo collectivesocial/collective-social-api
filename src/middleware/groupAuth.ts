@@ -54,7 +54,7 @@ export function requireGroupMember(ctx: AppContext) {
 
       next();
     } catch (error: any) {
-      console.error('Group membership check failed:', error.message);
+      ctx.logger.error({ err: error }, 'Group membership check failed');
       return res
         .status(error.status || 500)
         .json({ error: error.message || 'Membership check failed' });
@@ -118,7 +118,7 @@ export function requireGroupAdmin(ctx: AppContext) {
 
       next();
     } catch (error: any) {
-      console.error('Group admin check failed:', error.message);
+      ctx.logger.error({ err: error }, 'Group admin check failed');
       return res
         .status(error.status || 500)
         .json({ error: error.message || 'Admin check failed' });
