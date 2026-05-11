@@ -27,6 +27,7 @@ import {
   notifyUsers,
 } from '../services/notifications';
 import * as groupPostService from '../services/groupPosts';
+import * as groupEventsService from '../services/groupEvents';
 import * as userProfileService from '../services/userProfiles';
 import { getSessionAgent } from '../auth/agent';
 
@@ -659,7 +660,9 @@ export const createRouter = (ctx: AppContext) => {
               })
               .onConflict((oc) => oc.doNothing())
               .execute()
-              .catch(() => {});
+              .catch((err) => {
+                ctx.logger.warn({ err, segment_rkey: p.rkey }, 'Failed to backfill segment completion');
+              });
           })
         );
       }
@@ -935,6 +938,400 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   // ═══════════════════════════════════════════════════════════════
+  // SEGMENT EVENTS (meeting times for book club segments)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /groups/:communityDid/segments/:segmentRkey/event
+   * Attach an event to a segment. Admin only.
+   *
+   * Body: {
+   *   name, description?, startsAt, endsAt?,
+   *   mode? ('virtual'|'inperson'|'hybrid'),
+   *   locations? [{ name?, locality?, region?, country? }],
+   *   uris? [{ uri, name? }]
+   * }
+   */
+  router.post(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      // Verify segment exists
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      // Check for existing event on this segment
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (existing) {
+        return res
+          .status(409)
+          .json({ error: 'Segment already has an event', event: existing });
+      }
+
+      const { name, description, startsAt, endsAt, mode, locations, uris } =
+        req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ error: 'Event name is required' });
+      }
+
+      try {
+        const event = await groupEventsService.createEvent(
+          communityDid,
+          userDid,
+          {
+            name: name.trim(),
+            description,
+            startsAt,
+            endsAt,
+            mode,
+            status: 'scheduled',
+            segmentUri: segment.uri,
+            locations,
+            uris,
+          }
+        );
+        return res.status(201).json({ event });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to create segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to create segment event' });
+      }
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/event
+   * Get the event attached to a segment. Any member can read.
+   */
+  router.get(
+    '/segments/:segmentRkey/event',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      return res.json({ event });
+    })
+  );
+
+  /**
+   * PUT /groups/:communityDid/segments/:segmentRkey/event
+   * Update the segment's event. Admin only.
+   */
+  router.put(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!existing) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      const { name, description, startsAt, endsAt, mode, status, locations, uris } =
+        req.body;
+
+      try {
+        const event = await groupEventsService.updateEvent(
+          communityDid,
+          userDid,
+          existing.rkey,
+          { name, description, startsAt, endsAt, mode, status, locations, uris }
+        );
+        return res.json({ event });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to update segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to update segment event' });
+      }
+    })
+  );
+
+  /**
+   * DELETE /groups/:communityDid/segments/:segmentRkey/event
+   * Remove the segment's event. Admin only. Cascades RSVPs.
+   */
+  router.delete(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!existing) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        await groupEventsService.deleteEvent(
+          communityDid,
+          userDid,
+          existing.rkey,
+          existing.uri,
+          ctx.db
+        );
+        return res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to delete segment event' });
+      }
+    })
+  );
+
+  /**
+   * PUT /groups/:communityDid/segments/:segmentRkey/event/rsvp
+   * RSVP to a segment's event. Any member can RSVP.
+   * Body: { status: 'going' | 'interested' | 'notgoing' }
+   */
+  router.put(
+    '/segments/:segmentRkey/event/rsvp',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+      const { status } = req.body;
+
+      const VALID_RSVP: groupEventsService.RsvpStatus[] = [
+        'going',
+        'interested',
+        'notgoing',
+      ];
+      if (!status || !VALID_RSVP.includes(status)) {
+        return res.status(400).json({
+          error: `status must be one of: ${VALID_RSVP.join(', ')}`,
+        });
+      }
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        const { rsvpUri } = await groupEventsService.rsvpToEvent(
+          agent,
+          communityDid,
+          event.uri,
+          event.cid,
+          event.rkey,
+          status as groupEventsService.RsvpStatus,
+          ctx.db
+        );
+        return res.json({ rsvpUri, status });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to RSVP to segment event');
+        return res.status(500).json({ error: 'Failed to RSVP' });
+      }
+    })
+  );
+
+  /**
+   * DELETE /groups/:communityDid/segments/:segmentRkey/event/rsvp
+   * Remove RSVP from segment event.
+   */
+  router.delete(
+    '/segments/:segmentRkey/event/rsvp',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        await groupEventsService.removeRsvp(
+          agent,
+          event.uri,
+          event.rkey,
+          ctx.db
+        );
+        return res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to remove RSVP');
+        return res.status(500).json({ error: 'Failed to remove RSVP' });
+      }
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/event/rsvps
+   * List RSVPs for a segment's event. Any member can read.
+   * Query: status? ('going'|'interested'|'notgoing'), limit?, offset?
+   */
+  router.get(
+    '/segments/:segmentRkey/event/rsvps',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+      const statusFilter = req.query.status as
+        | groupEventsService.RsvpStatus
+        | undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        const { rows, total } = await groupEventsService.listRsvps(
+          event.uri,
+          ctx.db,
+          { status: statusFilter, limit, offset }
+        );
+
+        return res.json({
+          rsvps: rows.map((r) => ({
+            userDid: r.user_did,
+            status: r.status.split('#')[1],
+            rsvpUri: r.rsvp_uri,
+            rsvpAt: r.rsvp_at,
+          })),
+          total,
+          limit,
+          offset,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to list RSVPs');
+        return res.status(500).json({ error: 'Failed to list RSVPs' });
+      }
+    })
+  );
+
+  // ═══════════════════════════════════════════════════════════════
   // SEGMENT PROGRESS (per-member completion tracking)
   // ═══════════════════════════════════════════════════════════════
 
@@ -1079,7 +1476,9 @@ export const createRouter = (ctx: AppContext) => {
             })
             .onConflict((oc) => oc.doNothing())
             .execute()
-            .catch(() => {});
+            .catch((err) => {
+              ctx.logger.warn({ err, segment_rkey: segmentRkey }, 'Failed to backfill segment completion');
+            });
 
           return res.json({
             progress: {
@@ -1311,7 +1710,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ posts: enrichedThreads });
       } catch (err) {
-        console.error('Failed to fetch posts:', err);
+        ctx.logger.error({ err }, 'Failed to fetch posts');
         return res.status(500).json({ error: 'Failed to fetch posts' });
       }
     })
@@ -1367,7 +1766,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ posts: enrichedThreads });
       } catch (err) {
-        console.error('Failed to fetch posts:', err);
+        ctx.logger.error({ err }, 'Failed to fetch posts');
         return res.status(500).json({ error: 'Failed to fetch posts' });
       }
     })
@@ -1456,7 +1855,7 @@ export const createRouter = (ctx: AppContext) => {
           indexUri,
         });
       } catch (err) {
-        console.error('Failed to create post:', err);
+        ctx.logger.error({ err }, 'Failed to create post');
         return res.status(500).json({ error: 'Failed to create post' });
       }
     })
@@ -1515,7 +1914,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ success: true });
       } catch (err) {
-        console.error('Failed to delete post:', err);
+        ctx.logger.error({ err }, 'Failed to delete post');
         return res.status(500).json({ error: 'Failed to delete post' });
       }
     })
