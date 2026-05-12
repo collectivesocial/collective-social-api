@@ -85,10 +85,11 @@ export const createRouter = (ctx: AppContext) => {
       // Get collection count (needs auth to read user's repo)
       let collectionCount = 0;
       try {
-        const collectionsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: profile.data.did,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const collectionsResponse =
+          await agent.api.com.atproto.repo.listRecords({
+            repo: profile.data.did,
+            collection: 'app.collectivesocial.feed.list',
+          });
         collectionCount = collectionsResponse.data.records.length;
       } catch (err) {
         ctx.logger.warn({ err }, 'Failed to fetch collection count');
