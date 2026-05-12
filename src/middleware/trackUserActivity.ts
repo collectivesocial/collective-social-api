@@ -1,10 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
+import { Agent } from '@atproto/api';
 import { getIronSession } from 'iron-session';
 import { sql } from 'kysely';
 import { config } from '../config';
 import type { AppContext } from '../context';
 
 type Session = { did?: string };
+
+const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
 /**
  * Middleware to track user activity
@@ -42,11 +45,12 @@ export function createUserActivityTracker(ctx: AppContext) {
           try {
             const oauthSession = await ctx.oauthClient.restore(session.did);
             if (oauthSession) {
-              const { Agent } = await import('@atproto/api');
               const agent = new Agent(oauthSession);
 
-              // Get user profile
-              const profile = await agent.getProfile({ actor: session.did });
+              // Use public API for profile — avoids OAuth scope issues
+              const profile = await publicAgent.getProfile({
+                actor: session.did,
+              });
               const userHandle = profile.data.handle;
               const displayName = profile.data.displayName || null;
               const avatar = profile.data.avatar || null;
@@ -134,24 +138,21 @@ export function createUserActivityTracker(ctx: AppContext) {
 
           if (shouldRefreshProfile) {
             try {
-              const oauthSession = await ctx.oauthClient.restore(session.did);
-              if (oauthSession) {
-                const { Agent } = await import('@atproto/api');
-                const agent = new Agent(oauthSession);
-                const profile = await agent.getProfile({ actor: session.did });
+              const profile = await publicAgent.getProfile({
+                actor: session.did,
+              });
 
-                await ctx.db
-                  .updateTable('users')
-                  .set({
-                    handle: profile.data.handle,
-                    displayName: profile.data.displayName || null,
-                    avatar: profile.data.avatar || null,
-                    lastActivityAt: now,
-                    updatedAt: now,
-                  })
-                  .where('did', '=', session.did)
-                  .execute();
-              }
+              await ctx.db
+                .updateTable('users')
+                .set({
+                  handle: profile.data.handle,
+                  displayName: profile.data.displayName || null,
+                  avatar: profile.data.avatar || null,
+                  lastActivityAt: now,
+                  updatedAt: now,
+                })
+                .where('did', '=', session.did)
+                .execute();
             } catch (err) {
               // If profile refresh fails, just update activity
               await ctx.db
