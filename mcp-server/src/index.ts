@@ -51,10 +51,7 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 const httpServer = createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', config.allowedOrigins);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization'
-  );
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -84,7 +81,6 @@ const httpServer = createServer(async (req, res) => {
     };
 
     await mcpServer.connect(transport);
-    await transport.start();
     return;
   }
 
@@ -121,5 +117,7 @@ httpServer.listen(port, () => {
   console.log(`  API URL: ${config.collectiveApiUrl}`);
   console.log(`  SSE endpoint: GET /sse`);
   console.log(`  Message endpoint: POST /messages?sessionId=...`);
-  console.log(`  Auth: ${authConfig.requireAuth ? 'enabled' : 'disabled (dev mode)'}`);
+  console.log(
+    `  Auth: ${authConfig.requireAuth ? 'enabled' : 'disabled (dev mode)'}`
+  );
 });

@@ -83,7 +83,7 @@ export class CollectiveClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.token}`,
+      Cookie: `sid=${this.token}`,
       'Content-Type': 'application/json',
     };
 
