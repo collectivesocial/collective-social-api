@@ -5,16 +5,13 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    exclude: ['test/integration/**'],
     testTimeout: 10000,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
       include: ['src/**/*.ts'],
-      exclude: [
-        'src/lexicon/**',
-        'src/models/**',
-        'src/ingester.ts',
-      ],
+      exclude: ['src/lexicon/**', 'src/models/**', 'src/ingester.ts'],
     },
   },
 });

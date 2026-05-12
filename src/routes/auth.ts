@@ -1,45 +1,19 @@
 import path from 'path';
 
-import { Agent } from '@atproto/api';
 import { OAuthResolverError } from '@atproto/oauth-client-node';
 import express, { Request, Response } from 'express';
 import { getIronSession } from 'iron-session';
-import type {
-  RequestListener,
-} from 'node:http';
+import type { RequestListener } from 'node:http';
 
 import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
 import { ifString } from '../lib/stringUtil';
 import { SESSION_OPTIONS, Session } from '../auth/session';
+import { COLLECTIVE_SCOPES } from '../auth/scopes';
 
 // Max age, in seconds, for static routes and assets
 const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
-
-// Helper function to get the Atproto Agent for the active session
-async function getSessionAgent(
-  req: Request,
-  res: Response,
-  ctx: AppContext
-) {
-  res.setHeader('Vary', 'Cookie');
-
-  const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
-  if (!session.did) return null;
-
-  // This page is dynamic and should not be cached publicly
-  res.setHeader('cache-control', `max-age=${MAX_AGE}, private`);
-
-  try {
-    const oauthSession = await ctx.oauthClient.restore(session.did);
-    return oauthSession ? new Agent(oauthSession) : null;
-  } catch (err) {
-    ctx.logger.warn({ err }, 'oauth restore failed');
-    await session.destroy();
-    return null;
-  }
-}
 
 export const createRouter = (ctx: AppContext): RequestListener => {
   const router = express();
@@ -76,19 +50,15 @@ export const createRouter = (ctx: AppContext): RequestListener => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'no-store');
 
+      const redirectUrl = config.clientUrl || 'http://127.0.0.1:5173';
       const params = new URLSearchParams(req.originalUrl.split('?')[1]);
       try {
         // Load the session cookie
-        const session = await getIronSession<Session>(req, res, {
-          cookieName: 'sid',
-          password: config.cookieSecret,
-          cookieOptions: {
-            secure: config.nodeEnv === 'production',
-            sameSite: 'lax',
-            httpOnly: true,
-            path: '/',
-          },
-        });
+        const session = await getIronSession<Session>(
+          req,
+          res,
+          SESSION_OPTIONS
+        );
 
         // If the user is already signed in, destroy the old credentials
         if (session.did) {
@@ -107,16 +77,19 @@ export const createRouter = (ctx: AppContext): RequestListener => {
         session.did = oauth.session.did;
 
         await session.save();
+
+        return res.redirect(redirectUrl);
       } catch (err) {
         ctx.logger.error({ err }, 'oauth callback failed');
-      }
 
-      // Redirect back to the React app
-      const redirectUrl =
-        config.nodeEnv === 'production'
-          ? config.serviceUrl || 'http://127.0.0.1:5173'
-          : 'http://127.0.0.1:5173';
-      return res.redirect(redirectUrl);
+        const message =
+          err instanceof OAuthResolverError
+            ? err.message
+            : 'Login failed. Please try again.';
+        const errorUrl = new URL(redirectUrl);
+        errorUrl.searchParams.set('error', message);
+        return res.redirect(errorUrl.toString());
+      }
     })
   );
 
@@ -138,7 +111,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
 
         // Initiate the OAuth flow
         const url = await ctx.oauthClient.authorize(input, {
-          scope: 'atproto transition:generic',
+          scope: COLLECTIVE_SCOPES,
         });
 
         res.redirect(url.toString());
@@ -161,7 +134,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       try {
         const service = config.pdsUrl;
         const url = await ctx.oauthClient.authorize(service, {
-          scope: 'atproto transition:generic',
+          scope: COLLECTIVE_SCOPES,
         });
         res.redirect(url.toString());
       } catch (err) {
@@ -183,16 +156,7 @@ export const createRouter = (ctx: AppContext): RequestListener => {
       // Never store this route
       res.setHeader('cache-control', 'no-store');
 
-      const session = await getIronSession<Session>(req, res, {
-        cookieName: 'sid',
-        password: config.cookieSecret,
-        cookieOptions: {
-          secure: config.nodeEnv === 'production',
-          sameSite: 'lax',
-          httpOnly: true,
-          path: '/',
-        },
-      });
+      const session = await getIronSession<Session>(req, res, SESSION_OPTIONS);
 
       // Revoke credentials on the server
       if (session.did) {

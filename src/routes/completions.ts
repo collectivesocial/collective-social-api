@@ -18,7 +18,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const mediaItemId = parseInt(req.params.mediaItemId, 10);
+      const mediaItemId = parseInt(req.params.mediaItemId as string, 10);
       if (isNaN(mediaItemId)) {
         return res.status(400).json({ error: 'Invalid mediaItemId' });
       }
@@ -98,7 +98,10 @@ export const createRouter = (ctx: AppContext) => {
           mediaItemId,
           mediaType: mediaType || undefined,
           completedAt,
-          rating: rating !== undefined && rating !== null ? Number(rating) : undefined,
+          rating:
+            rating !== undefined && rating !== null
+              ? Number(rating)
+              : undefined,
           notes: notes || undefined,
           createdAt: now,
         };
@@ -136,7 +139,9 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const completionUri = decodeURIComponent(req.params.completionUri);
+      const completionUri = decodeURIComponent(
+        req.params.completionUri as string
+      );
       const rkeyMatch = completionUri.match(/\/([^\/]+)$/);
       if (!rkeyMatch) {
         return res.status(400).json({ error: 'Invalid completion URI' });
@@ -169,8 +174,8 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const userDid = req.params.did;
-      const mediaItemId = parseInt(req.params.mediaItemId, 10);
+      const userDid = req.params.did as string;
+      const mediaItemId = parseInt(req.params.mediaItemId as string, 10);
       if (isNaN(mediaItemId)) {
         return res.status(400).json({ error: 'Invalid mediaItemId' });
       }

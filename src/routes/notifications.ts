@@ -90,7 +90,10 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         await query.execute();
-      } else if (Array.isArray(notification_ids) && notification_ids.length > 0) {
+      } else if (
+        Array.isArray(notification_ids) &&
+        notification_ids.length > 0
+      ) {
         await ctx.db
           .updateTable('group_notifications')
           .set({ read: true })
@@ -98,7 +101,9 @@ export const createRouter = (ctx: AppContext) => {
           .where('id', 'in', notification_ids)
           .execute();
       } else {
-        return res.status(400).json({ error: 'Provide notification_ids or set all: true' });
+        return res
+          .status(400)
+          .json({ error: 'Provide notification_ids or set all: true' });
       }
 
       return res.json({ success: true });

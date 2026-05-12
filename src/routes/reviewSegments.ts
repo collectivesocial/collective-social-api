@@ -87,7 +87,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const segmentUri = decodeURIComponent(req.params.uri);
+        const segmentUri = decodeURIComponent(req.params.uri as string);
         const { title, text, percentage, mediaItemId, mediaType, listItem } =
           req.body;
 
@@ -215,7 +215,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const segmentUri = decodeURIComponent(req.params.uri);
+        const segmentUri = decodeURIComponent(req.params.uri as string);
 
         // Extract DID from URI to verify ownership
         const didMatch = segmentUri.match(/^at:\/\/([^\/]+)/);
@@ -265,7 +265,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const mediaItemId = parseInt(req.params.mediaItemId);
+        const mediaItemId = parseInt(req.params.mediaItemId as string);
 
         if (isNaN(mediaItemId)) {
           return res.status(400).json({ error: 'Invalid media item ID' });
@@ -307,7 +307,9 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listItemUri = decodeURIComponent(req.params.listItemUri);
+        const listItemUri = decodeURIComponent(
+          req.params.listItemUri as string
+        );
 
         // Get all review segments from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({
@@ -345,7 +347,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const userDid = req.params.did;
+        const userDid = req.params.did as string;
         const mediaItemId = req.query.mediaItemId
           ? parseInt(req.query.mediaItemId as string)
           : undefined;

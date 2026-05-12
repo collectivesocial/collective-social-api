@@ -124,7 +124,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const mediaItemId = parseInt(req.params.mediaItemId, 10);
+      const mediaItemId = parseInt(req.params.mediaItemId as string, 10);
       if (isNaN(mediaItemId)) {
         return res.status(400).json({ error: 'Invalid mediaItemId' });
       }
@@ -307,9 +307,13 @@ export const createRouter = (ctx: AppContext) => {
           mediaItemId,
           mediaType: mediaType || undefined,
           status: status || 'want',
-          rating: rating !== undefined && rating !== null ? Number(rating) : undefined,
+          rating:
+            rating !== undefined && rating !== null
+              ? Number(rating)
+              : undefined,
           notes: notes || undefined,
-          recommendations: recommendations.length > 0 ? recommendations : undefined,
+          recommendations:
+            recommendations.length > 0 ? recommendations : undefined,
           createdAt: now,
           updatedAt: now,
         };
@@ -345,6 +349,7 @@ export const createRouter = (ctx: AppContext) => {
             .insertInto('feed_events')
             .values({
               eventName,
+              eventType: 'item_status_change',
               mediaLink: `/items/${mediaItemId}`,
               userDid: agent.did!,
               createdAt: new Date(),
@@ -383,7 +388,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       const { status, rating, notes, review, completedAt } = req.body;
-      const useritemUri = decodeURIComponent(req.params.useritemUri);
+      const useritemUri = decodeURIComponent(req.params.useritemUri as string);
 
       // Extract rkey from URI
       const rkeyMatch = useritemUri.match(/\/([^\/]+)$/);
@@ -418,8 +423,13 @@ export const createRouter = (ctx: AppContext) => {
         const updatedRecord: AppCollectiveSocialFeedUseritem.Record = {
           ...existingData,
           status: status || existingData.status,
-          rating: rating !== undefined ? (rating === null ? undefined : Number(rating)) : existingData.rating,
-          notes: notes !== undefined ? (notes || undefined) : existingData.notes,
+          rating:
+            rating !== undefined
+              ? rating === null
+                ? undefined
+                : Number(rating)
+              : existingData.rating,
+          notes: notes !== undefined ? notes || undefined : existingData.notes,
           review: review !== undefined ? review : existingData.review,
           completedAt: newCompletedAt,
           updatedAt: now,
@@ -612,16 +622,14 @@ export const createRouter = (ctx: AppContext) => {
                   .insertInto('feed_events')
                   .values({
                     eventName,
+                    eventType: 'item_reviewed',
                     mediaLink: `/items/${mediaItemId}`,
                     userDid: agent.did!,
                     createdAt: new Date(),
                   } as any)
                   .execute();
               } catch (err) {
-                ctx.logger.error(
-                  { err },
-                  'Failed to create review feed event'
-                );
+                ctx.logger.error({ err }, 'Failed to create review feed event');
               }
             }
           }
@@ -652,7 +660,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const useritemUri = decodeURIComponent(req.params.useritemUri);
+      const useritemUri = decodeURIComponent(req.params.useritemUri as string);
       const rkeyMatch = useritemUri.match(/\/([^\/]+)$/);
       if (!rkeyMatch) {
         return res.status(400).json({ error: 'Invalid useritem URI' });
@@ -713,7 +721,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const userDid = req.params.did;
+      const userDid = req.params.did as string;
 
       try {
         const allUseritems: any[] = [];

@@ -1,29 +1,10 @@
-# Environment
+node_modules
+dist
 .env
 .env.*
 !.env.example
-
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+.git
+.gitignore
+.github
 *.log
-
-# Docker data
-postgres_data/
-
-# Coverage
-coverage/
+.vscode

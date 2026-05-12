@@ -157,8 +157,8 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=30');
 
-      const { subjectType } = req.params;
-      const subjectUri = decodeURIComponent(req.params.encodedUri);
+      const subjectType = req.params.subjectType as string;
+      const subjectUri = decodeURIComponent(req.params.encodedUri as string);
 
       if (subjectType !== 'review' && subjectType !== 'comment') {
         return res
@@ -207,8 +207,8 @@ export const createRouter = (ctx: AppContext) => {
         return res.json({ userReactions: [] });
       }
 
-      const { subjectType } = req.params;
-      const subjectUri = decodeURIComponent(req.params.encodedUri);
+      const subjectType = req.params.subjectType as string;
+      const subjectUri = decodeURIComponent(req.params.encodedUri as string);
 
       if (subjectType !== 'review' && subjectType !== 'comment') {
         return res

@@ -1,0 +1,72 @@
+{
+  "lexicon": 1,
+  "id": "app.collectivesocial.feed.goal",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A media consumption goal (e.g., 'Read 24 books in 2026'). Stored in the user's ATProto PDS so it travels with their account.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": [
+          "title",
+          "targetCount",
+          "startDate",
+          "endDate",
+          "createdAt"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Display title for the goal, e.g. '2026 Reading Challenge'.",
+            "maxGraphemes": 300,
+            "maxLength": 3000
+          },
+          "mediaType": {
+            "type": "string",
+            "description": "Type of media this goal tracks. If omitted, counts all media types.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "course",
+              "video"
+            ],
+            "maxLength": 64
+          },
+          "targetCount": {
+            "type": "integer",
+            "description": "Number of items to complete within the date range.",
+            "minimum": 1
+          },
+          "startDate": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Start of the goal period (inclusive)."
+          },
+          "endDate": {
+            "type": "string",
+            "format": "datetime",
+            "description": "End of the goal period (inclusive)."
+          },
+          "visibility": {
+            "type": "string",
+            "description": "Whether this goal is visible on the user's public profile.",
+            "knownValues": ["public", "private"],
+            "default": "public",
+            "maxLength": 32
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when the goal was created."
+          }
+        }
+      }
+    }
+  }
+}

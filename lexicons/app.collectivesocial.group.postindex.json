@@ -4,16 +4,16 @@
   "defs": {
     "main": {
       "type": "record",
-      "description": "Index entry in community repo pointing to a user's personal group post.",
+      "description": "Index entry in community repo pointing to a user's personal group post. The `post` field is a strongRef (uri + cid) so readers can verify integrity.",
       "key": "tid",
       "record": {
         "type": "object",
-        "required": ["postUri", "authorDid", "createdAt"],
+        "required": ["post", "authorDid", "createdAt"],
         "properties": {
-          "postUri": {
-            "type": "string",
-            "format": "at-uri",
-            "description": "AT-URI of the post in the author's personal repo."
+          "post": {
+            "type": "ref",
+            "ref": "com.atproto.repo.strongRef",
+            "description": "StrongRef (uri + cid) of the post in the author's personal repo."
           },
           "authorDid": {
             "type": "string",

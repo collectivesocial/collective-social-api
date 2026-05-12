@@ -1,14 +1,33 @@
 /**
  * OpenSocial API client for Collective Social.
  *
- * Uses an API key registered through the OpenSocial developer UI
- * (stored in OPENSOCIAL_API_KEY env var) to talk to the OpenSocial backend.
+ * Supports two authentication modes:
+ * - API key (X-Api-Key header) — legacy, used when OPENSOCIAL_API_KEY is set
+ * - CIMD + HTTP Message Signatures — used when OPENSOCIAL_SIGNING_KEY is set
+ *
+ * When both are configured, HTTP Message Signatures take priority.
+ *
+ * Most data operations use XRPC endpoints (/xrpc/community.opensocial.*)
+ * instead of REST. App-management endpoints (createCommunity, verifyCredentials,
+ * checkMembership) remain REST.
  */
 
 import { config } from '../config';
+import { signRequest, type SigningConfig } from '../lib/httpSigning';
 
 const OPENSOCIAL_API_URL = config.openSocialApiUrl;
 const OPENSOCIAL_API_KEY = config.openSocialApiKey;
+
+// Build signing config from env if available
+let signingConfig: SigningConfig | null = null;
+if (config.openSocialSigningKey) {
+  signingConfig = {
+    privateKey: config.openSocialSigningKey,
+    keyId: config.openSocialKeyId || 'collective-social-key-1',
+    algorithm: (config.openSocialKeyAlgorithm ||
+      'ed25519') as SigningConfig['algorithm'],
+  };
+}
 
 interface Community {
   did: string;
@@ -17,6 +36,7 @@ interface Community {
   pds_host: string;
   created_at: string;
   is_admin: boolean;
+  avatar?: string | null;
 }
 
 interface CommunityDetail {
@@ -26,26 +46,34 @@ interface CommunityDetail {
   display_name: string;
   description?: string;
   guidelines?: string;
-  admins: Array<{
-    did: string;
-    permissions: string[];
-    addedAt: string;
-  }>;
+  type?: string;
+  avatar?: string | null;
+  banner?: string | null;
+  member_count?: number;
+  admins:
+    | Array<{
+        did: string;
+        permissions: string[];
+        addedAt: string;
+      }>
+    | string[];
   created_at: string;
 }
 
-interface JoinInfo {
-  action: string;
-  instructions: string;
-  record: {
-    $type: string;
-    community: string;
+/**
+ * Response from the OpenSocial joinCommunity XRPC procedure.
+ *
+ * Note: open-social writes the `membershipProof` record to the community's PDS
+ * synchronously before returning. The caller is responsible for writing the
+ * matching `community.opensocial.membership` record into the user's PDS.
+ */
+export interface JoinCommunityResponse {
+  status: 'joined' | 'pending' | string;
+  message: string;
+  membership?: {
+    communityDid: string;
+    memberDid: string;
     joinedAt: string;
-  };
-  collection: string;
-  community: {
-    handle: string;
-    did: string;
   };
 }
 
@@ -60,24 +88,52 @@ class OpenSocialClientError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!OPENSOCIAL_API_URL) {
-    throw new OpenSocialClientError('OPENSOCIAL_API_URL is not configured', 500);
+    throw new OpenSocialClientError(
+      'OPENSOCIAL_API_URL is not configured',
+      500
+    );
   }
-  if (!OPENSOCIAL_API_KEY) {
-    throw new OpenSocialClientError('OPENSOCIAL_API_KEY is not configured', 500);
+  if (!signingConfig && !OPENSOCIAL_API_KEY) {
+    throw new OpenSocialClientError(
+      'Neither OPENSOCIAL_SIGNING_KEY nor OPENSOCIAL_API_KEY is configured',
+      500
+    );
   }
 
   const url = `${OPENSOCIAL_API_URL}${path}`;
+  const body = options.body as string | undefined;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  };
+
+  // Use API key auth when available; HTTP Message Signatures require the
+  // app to be registered with auth_method='http_signature' on the server,
+  // so we fall back to them only when no API key is configured.
+  if (OPENSOCIAL_API_KEY) {
+    headers['X-Api-Key'] = OPENSOCIAL_API_KEY;
+  } else if (signingConfig) {
+    const sigHeaders = signRequest(
+      {
+        method: options.method || 'GET',
+        url,
+        headers,
+        body,
+      },
+      signingConfig
+    );
+    Object.assign(headers, sigHeaders);
+  }
+
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Api-Key': OPENSOCIAL_API_KEY,
-      ...options.headers,
-    },
+    headers,
   });
 
   if (!response.ok) {
-    const body = await response.json().catch(() => ({ error: response.statusText }));
+    const body = await response
+      .json()
+      .catch(() => ({ error: response.statusText }));
     throw new OpenSocialClientError(
       (body as any).error || `OpenSocial API error: ${response.status}`,
       response.status
@@ -85,6 +141,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+/**
+ * Make an XRPC query (GET) call to Open Social.
+ */
+async function xrpcQuery<T>(
+  method: string,
+  params: Record<string, string | number | undefined> = {}
+): Promise<T> {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) searchParams.set(key, String(value));
+  }
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return request<T>(`/xrpc/${method}${qs}`);
+}
+
+/**
+ * Make an XRPC procedure (POST) call to Open Social.
+ */
+async function xrpcProcedure<T>(
+  method: string,
+  input: Record<string, unknown> = {}
+): Promise<T> {
+  return request<T>(`/xrpc/${method}`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 // ── PDS record types ─────────────────────────────────────────────
@@ -127,27 +211,60 @@ export async function listAllCommunityRecords<T = Record<string, unknown>>(
 /**
  * List all communities visible to this app.
  * Optionally pass a user DID to include is_admin flags.
+ * Supports cursor-based pagination.
  */
-export async function listCommunities(userDid?: string, query?: string): Promise<Community[]> {
-  const params = new URLSearchParams();
-  if (userDid) params.set('userDid', userDid);
-  if (query) params.set('query', query);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  const data = await request<{ communities: Community[] }>(
-    `/api/v1/communities${qs}`
+export async function listCommunities(
+  opts: {
+    userDid?: string;
+    query?: string;
+    limit?: number;
+    cursor?: string;
+  } = {}
+): Promise<{ communities: Community[]; cursor?: string }> {
+  const data = await xrpcQuery<{ communities: Community[]; cursor?: string }>(
+    'community.opensocial.searchCommunities',
+    {
+      userDid: opts.userDid,
+      query: opts.query,
+      limit: opts.limit ?? 10,
+      cursor: opts.cursor,
+    }
   );
-  return data.communities;
+  return { communities: data.communities, cursor: data.cursor };
 }
 
 /**
  * Get full community details including profile + admins.
+ *
+ * The OpenSocial XRPC returns camelCase keys (`displayName`, `createdAt`,
+ * `memberCount`, `isAdmin`); normalize them to the snake_case shape that
+ * Collective Social's REST layer (and the web client) expects.
  */
 export async function getCommunity(
   did: string,
   userDid?: string
 ): Promise<{ community: CommunityDetail; is_admin: boolean }> {
-  const params = userDid ? `?user_did=${encodeURIComponent(userDid)}` : '';
-  return request(`/api/v1/communities/${encodeURIComponent(did)}${params}`);
+  const data = await xrpcQuery<{
+    community: Record<string, any>;
+    isAdmin: boolean;
+  }>('community.opensocial.getCommunity', { did, userDid });
+
+  const c = data.community || {};
+  const community: CommunityDetail = {
+    did: c.did,
+    handle: c.handle,
+    pds_host: c.pds_host || c.pdsHost || '',
+    display_name: c.display_name || c.displayName || c.handle,
+    description: c.description ?? undefined,
+    guidelines: c.guidelines ?? undefined,
+    type: c.type ?? 'open',
+    avatar: c.avatar ?? null,
+    banner: c.banner ?? null,
+    member_count: c.member_count ?? c.memberCount ?? 0,
+    admins: c.admins ?? [],
+    created_at: c.created_at || c.createdAt || '',
+  };
+  return { community, is_admin: data.isAdmin };
 }
 
 /**
@@ -168,25 +285,33 @@ export async function createCommunity(opts: {
 /**
  * Delete a community (caller must be the sole admin).
  */
-export async function deleteCommunity(did: string, userDid: string): Promise<void> {
-  await request(`/api/v1/communities/${encodeURIComponent(did)}`, {
-    method: 'DELETE',
-    body: JSON.stringify({ user_did: userDid }),
+export async function deleteCommunity(
+  did: string,
+  userDid: string
+): Promise<void> {
+  await xrpcProcedure('community.opensocial.deleteCommunity', {
+    communityDid: did,
+    adminDid: userDid,
   });
 }
 
 /**
- * Get join information for a community.
- * Returns the record the client should write to the user's repo.
+ * Ask OpenSocial to record a join. For open communities this writes the
+ * `membershipProof` record into the community's PDS and returns
+ * `{ status: 'joined' }`. For admin-approved communities it returns
+ * `{ status: 'pending' }` instead. After a successful 'joined' response the
+ * caller must also write a `community.opensocial.membership` record into the
+ * user's own PDS.
  */
 export async function joinCommunity(
   communityDid: string,
   userDid: string,
-  userPdsHost: string
-): Promise<JoinInfo> {
-  return request(`/api/v1/communities/${encodeURIComponent(communityDid)}/members`, {
-    method: 'POST',
-    body: JSON.stringify({ user_did: userDid, user_pds_host: userPdsHost }),
+  _userPdsHost: string
+): Promise<JoinCommunityResponse> {
+  return xrpcProcedure('community.opensocial.joinCommunity', {
+    communityDid,
+    userDid,
+    membershipCid: '',
   });
 }
 
@@ -247,13 +372,13 @@ export async function createCommunityRecord(
   record: Record<string, unknown>,
   rkey?: string
 ): Promise<RecordResponse> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ userDid, collection, record: { $type: collection, ...record }, rkey }),
-    }
-  );
+  return xrpcProcedure('community.opensocial.createRecord', {
+    communityDid,
+    userDid,
+    collection,
+    record: { $type: collection, ...record },
+    rkey,
+  });
 }
 
 /**
@@ -267,13 +392,13 @@ export async function updateCommunityRecord(
   rkey: string,
   record: Record<string, unknown>
 ): Promise<RecordResponse> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records`,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ userDid, collection, rkey, record: { $type: collection, ...record } }),
-    }
-  );
+  return xrpcProcedure('community.opensocial.putRecord', {
+    communityDid,
+    userDid,
+    collection,
+    rkey,
+    record: { $type: collection, ...record },
+  });
 }
 
 /**
@@ -285,10 +410,12 @@ export async function deleteCommunityRecord(
   collection: string,
   rkey: string
 ): Promise<{ success: boolean }> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}?userDid=${encodeURIComponent(userDid)}`,
-    { method: 'DELETE' }
-  );
+  return xrpcProcedure('community.opensocial.deleteRecord', {
+    communityDid,
+    userDid,
+    collection,
+    rkey,
+  });
 }
 
 /**
@@ -299,13 +426,12 @@ export async function listCommunityRecords(
   collection: string,
   opts?: { limit?: number; cursor?: string }
 ): Promise<ListRecordsResponse> {
-  const params = new URLSearchParams();
-  if (opts?.limit) params.set('limit', String(opts.limit));
-  if (opts?.cursor) params.set('cursor', opts.cursor);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}${qs}`
-  );
+  return xrpcQuery('community.opensocial.listRecords', {
+    communityDid,
+    collection,
+    limit: opts?.limit,
+    cursor: opts?.cursor,
+  });
 }
 
 /**
@@ -316,9 +442,11 @@ export async function getCommunityRecord(
   collection: string,
   rkey: string
 ): Promise<RecordValue> {
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/records/${encodeURIComponent(collection)}/${encodeURIComponent(rkey)}`
-  );
+  return xrpcQuery('community.opensocial.getRecord', {
+    communityDid,
+    collection,
+    rkey,
+  });
 }
 
 /**
@@ -342,13 +470,12 @@ export async function checkMembership(
  */
 export async function listMembers(
   communityDid: string,
-  search?: string
+  _search?: string
 ): Promise<MembersResponse> {
-  const params = new URLSearchParams({ public: 'true' });
-  if (search) params.set('search', search);
-  return request(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/members?${params.toString()}`
-  );
+  return xrpcQuery('community.opensocial.getMembers', {
+    communityDid,
+    limit: 100,
+  });
 }
 
 // ── Permissions ───────────────────────────────────────────────────
@@ -376,7 +503,10 @@ interface PermissionsResponse {
 }
 
 // In-memory permissions cache: keyed on "communityDid:userDid", TTL 60 s
-const permissionsCache = new Map<string, { data: PermissionsResponse; fetchedAt: number }>();
+const permissionsCache = new Map<
+  string,
+  { data: PermissionsResponse; fetchedAt: number }
+>();
 const PERMISSIONS_CACHE_TTL = 60_000; // 60 seconds
 
 /**
@@ -393,12 +523,9 @@ export async function getCommunityPermissions(
     return cached.data;
   }
 
-  const params = new URLSearchParams();
-  if (userDid) params.set('userDid', userDid);
-  const qs = params.toString() ? `?${params.toString()}` : '';
-
-  const data = await request<PermissionsResponse>(
-    `/api/v1/communities/${encodeURIComponent(communityDid)}/permissions${qs}`
+  const data = await xrpcQuery<PermissionsResponse>(
+    'community.opensocial.getPermissions',
+    { communityDid, userDid }
   );
 
   permissionsCache.set(cacheKey, { data, fetchedAt: Date.now() });
@@ -421,7 +548,10 @@ export async function resolveUserPermissions(
   communityDid: string,
   userDid?: string
 ): Promise<Record<string, ResolvedCollectionPermission>> {
-  const { permissions, userRoles } = await getCommunityPermissions(communityDid, userDid);
+  const { permissions, userRoles } = await getCommunityPermissions(
+    communityDid,
+    userDid
+  );
 
   const resolve = (requiredRole: string): boolean => {
     if (!userDid || userRoles.length === 0) return false;
@@ -435,32 +565,66 @@ export async function resolveUserPermissions(
     return userRoles.includes(requiredRole);
   };
 
-  // If we got permission rows from open-social, use them
-  if (permissions.length > 0) {
-    const result: Record<string, ResolvedCollectionPermission> = {};
-    for (const perm of permissions) {
-      result[perm.collection] = {
-        canCreate: resolve(perm.canCreate),
-        canRead: resolve(perm.canRead),
-        canUpdate: resolve(perm.canUpdate),
-        canDelete: resolve(perm.canDelete),
-      };
-    }
-    return result;
-  }
-
-  // Fallback: no permission rows (app not enabled yet).
-  // Use hardcoded defaults matching the original middleware behavior.
-  const DEFAULTS: Record<string, { c: string; r: string; u: string; d: string }> = {
-    'app.collectivesocial.group.list':            { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.listitem':        { c: 'admin',  r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.listitem.status':  { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.segment':          { c: 'admin', r: 'member', u: 'admin', d: 'admin' },
-    'app.collectivesocial.group.segment.progress':  { c: 'member', r: 'member', u: 'member', d: 'member' },
-    'app.collectivesocial.group.post':             { c: 'member', r: 'member', u: 'member', d: 'admin' },
-    'app.collectivesocial.group.reaction':         { c: 'member', r: 'member', u: 'member', d: 'member' },
+  // Hardcoded defaults matching the original middleware behavior.
+  // Used as a baseline so that collections not yet seeded in the DB are
+  // always present. DB rows take precedence when they exist.
+  const DEFAULTS: Record<
+    string,
+    { c: string; r: string; u: string; d: string }
+  > = {
+    'app.collectivesocial.group.list': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.listitem': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.listitem.status': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.segment': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.segment.progress': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'member',
+    },
+    'app.collectivesocial.group.post': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'admin',
+    },
+    'app.collectivesocial.group.reaction': {
+      c: 'member',
+      r: 'member',
+      u: 'member',
+      d: 'member',
+    },
+    // Events are created/updated/deleted by admins; all members can read.
+    // RSVPs are user-PDS records and are NOT in DEFAULTS (OpenSocial is not in that path).
+    'community.lexicon.calendar.event': {
+      c: 'admin',
+      r: 'member',
+      u: 'admin',
+      d: 'admin',
+    },
   };
 
+  // Build from DEFAULTS as baseline
   const result: Record<string, ResolvedCollectionPermission> = {};
   for (const [col, def] of Object.entries(DEFAULTS)) {
     result[col] = {
@@ -470,5 +634,17 @@ export async function resolveUserPermissions(
       canDelete: resolve(def.d),
     };
   }
+
+  // Overlay DB rows: community-specific overrides take precedence over DEFAULTS.
+  // Also covers collections not in DEFAULTS (e.g. app-specific custom collections).
+  for (const perm of permissions) {
+    result[perm.collection] = {
+      canCreate: resolve(perm.canCreate),
+      canRead: resolve(perm.canRead),
+      canUpdate: resolve(perm.canUpdate),
+      canDelete: resolve(perm.canDelete),
+    };
+  }
+
   return result;
 }

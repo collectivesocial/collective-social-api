@@ -509,7 +509,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:id',
     handler(async (req: Request, res: Response) => {
-      const { id } = req.params;
+      const id = req.params.id as string;
 
       try {
         const item = await ctx.db
@@ -565,7 +565,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:id/reviews',
     handler(async (req: Request, res: Response) => {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const limit = parseInt(req.query.limit as string) || 20;
       const offset = parseInt(req.query.offset as string) || 0;
 
@@ -646,7 +646,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { id } = req.params;
+      const id = req.params.id as string;
 
       // Check if media item exists and get its creator
       const mediaItem = await ctx.db
@@ -749,7 +749,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(403).json({ error: 'Admin access required' });
       }
 
-      const { id } = req.params;
+      const id = req.params.id as string;
 
       try {
         // Delete the media item

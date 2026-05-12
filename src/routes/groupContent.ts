@@ -15,6 +15,7 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
   requireGroupMember,
+  requireGroupAdmin,
   GroupAuthRequest,
 } from '../middleware/groupAuth';
 import * as opensocial from '../services/opensocial';
@@ -26,6 +27,7 @@ import {
   notifyUsers,
 } from '../services/notifications';
 import * as groupPostService from '../services/groupPosts';
+import * as groupEventsService from '../services/groupEvents';
 import * as userProfileService from '../services/userProfiles';
 import { getSessionAgent } from '../auth/agent';
 
@@ -35,7 +37,10 @@ const COL_LIST = 'app.collectivesocial.group.list';
 const COL_LISTITEM = 'app.collectivesocial.group.listitem';
 const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
 const COL_SEGMENT = 'app.collectivesocial.group.segment';
-const COL_SEGMENT_PROGRESS = 'app.collectivesocial.group.segment.progress';
+// Segment progress now lives in the user's own PDS (B5 decision).
+// The old community-PDS collection (app.collectivesocial.group.segment.progress)
+// is no longer written to; existing records in the community repo are obsolete.
+const COL_SEGMENT_PROGRESS_USER = 'app.collectivesocial.feed.segmentprogress';
 const COL_POST = 'app.collectivesocial.group.post';
 const COL_REACTION = 'app.collectivesocial.group.reaction';
 
@@ -46,6 +51,7 @@ export const createRouter = (ctx: AppContext) => {
   // Fine-grained permission enforcement (member vs admin per collection)
   // is handled by open-social when the record write is proxied.
   const memberOnly = requireGroupMember(ctx);
+  const adminOnly = requireGroupAdmin(ctx);
 
   // ═══════════════════════════════════════════════════════════════
   // LISTS
@@ -61,11 +67,15 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
 
-      const records = await opensocial.listAllCommunityRecords(communityDid, COL_LIST);
+      const records = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LIST
+      );
       const lists = records
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
-        .sort((a: any, b: any) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
 
       return res.json({ lists });
@@ -81,24 +91,34 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
       // Fetch all items and filter by this list's URI
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
       const items = allItems
         .filter((r: any) => r.value.listUri === list.uri)
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
         .sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
 
       // Fetch status records to enrich items
-      const allStatuses = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM_STATUS);
+      const allStatuses = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM_STATUS
+      );
       const statusByItemUri = new Map<string, any>();
       for (const s of allStatuses) {
         statusByItemUri.set(s.value.listItemUri as string, s.value);
@@ -144,7 +164,14 @@ export const createRouter = (ctx: AppContext) => {
         communityDid,
         userDid,
         COL_LIST,
-        { name, description, purpose, segmentType, createdBy: userDid, createdAt: now }
+        {
+          name,
+          description,
+          purpose,
+          segmentType,
+          createdBy: userDid,
+          createdAt: now,
+        }
       );
 
       // Notify members
@@ -170,6 +197,78 @@ export const createRouter = (ctx: AppContext) => {
   );
 
   /**
+   * PUT /groups/:communityDid/lists/reorder
+   * Bulk-update the display order of the community's lists. Admin only.
+   *
+   * Body: { order: string[] } — array of list rkeys in the new desired order.
+   * Lists not included in `order` are appended after, preserving their
+   * existing relative order.
+   */
+  router.put(
+    '/lists/reorder',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const { order } = req.body as { order?: unknown };
+
+      if (!Array.isArray(order) || order.some((r) => typeof r !== 'string')) {
+        return res
+          .status(400)
+          .json({ error: '`order` must be an array of list rkeys' });
+      }
+
+      // Fetch the current set of lists from the community PDS. Each list we
+      // need to update is read individually so we can merge the new `order`
+      // value with the rest of the existing record.
+      const allLists = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LIST
+      );
+      const byRkey = new Map(allLists.map((r) => [rkeyFromUri(r.uri), r]));
+
+      // Reject unknown rkeys up front rather than half-applying the change.
+      const unknown = (order as string[]).filter((rkey) => !byRkey.has(rkey));
+      if (unknown.length > 0) {
+        return res.status(404).json({
+          error: `Unknown list rkey(s): ${unknown.join(', ')}`,
+        });
+      }
+
+      // Apply the new order. Writes happen in parallel for speed; if any
+      // individual write fails the others still complete and we report the
+      // first error so the client can refetch and recover.
+      const updates = (order as string[]).map((rkey, index) => {
+        const existing = byRkey.get(rkey)!;
+        const updatedRecord = { ...existing.value, order: index };
+        return opensocial.updateCommunityRecord(
+          communityDid,
+          userDid,
+          COL_LIST,
+          rkey,
+          updatedRecord
+        );
+      });
+
+      const results = await Promise.allSettled(updates);
+      const failures = results.filter(
+        (r): r is PromiseRejectedResult => r.status === 'rejected'
+      );
+      if (failures.length > 0) {
+        ctx.logger.error(
+          { failures: failures.map((f) => f.reason?.message) },
+          'Some list reorder updates failed'
+        );
+        return res.status(500).json({
+          error: 'Failed to reorder some lists',
+          failedCount: failures.length,
+        });
+      }
+
+      return res.json({ success: true, count: order.length });
+    })
+  );
+
+  /**
    * PUT /groups/:communityDid/lists/:rkey
    * Update a list. Admin only.
    *
@@ -180,13 +279,17 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
       const { name, description, purpose, segmentType } = req.body;
 
       // Fetch existing to merge
       let existing: PdsRecord;
       try {
-        existing = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        existing = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
@@ -194,13 +297,19 @@ export const createRouter = (ctx: AppContext) => {
       const updatedRecord = {
         ...existing.value,
         name: name ?? existing.value.name,
-        description: description !== undefined ? description : existing.value.description,
+        description:
+          description !== undefined ? description : existing.value.description,
         purpose: purpose !== undefined ? purpose : existing.value.purpose,
-        segmentType: segmentType !== undefined ? segmentType : existing.value.segmentType,
+        segmentType:
+          segmentType !== undefined ? segmentType : existing.value.segmentType,
       };
 
       const result = await opensocial.updateCommunityRecord(
-        communityDid, userDid, COL_LIST, rkey, updatedRecord
+        communityDid,
+        userDid,
+        COL_LIST,
+        rkey,
+        updatedRecord
       );
 
       return res.json({
@@ -218,26 +327,45 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       // Get the list URI to find children
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, rkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
       // Delete all child items (and their children: segments, posts, reactions)
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
-      const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
+      const listItems = allItems.filter(
+        (r: any) => r.value.listUri === list.uri
+      );
 
       for (const item of listItems) {
-        await deleteItemAndChildren(communityDid, userDid, item.uri, rkeyFromUri(item.uri));
+        await deleteItemAndChildren(
+          communityDid,
+          userDid,
+          item.uri,
+          rkeyFromUri(item.uri)
+        );
       }
 
       // Delete the list itself
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_LIST, rkey);
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_LIST,
+        rkey
+      );
 
       return res.json({ success: true });
     })
@@ -256,17 +384,24 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { listRkey } = req.params;
+      const listRkey = req.params.listRkey as string;
 
       // Get the list URI
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          listRkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
 
-      const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
+      const allItems = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_LISTITEM
+      );
       const items = allItems
         .filter((r: any) => r.value.listUri === list.uri)
         .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
@@ -287,17 +422,23 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { listRkey } = req.params;
+      const listRkey = req.params.listRkey as string;
       const { title, creator, mediaItemId, mediaType, order } = req.body;
 
       if (!title || !mediaType) {
-        return res.status(400).json({ error: 'title and mediaType are required' });
+        return res
+          .status(400)
+          .json({ error: 'title and mediaType are required' });
       }
 
       // Get the list URI + name
       let list: PdsRecord;
       try {
-        list = await opensocial.getCommunityRecord(communityDid, COL_LIST, listRkey);
+        list = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LIST,
+          listRkey
+        );
       } catch {
         return res.status(404).json({ error: 'List not found' });
       }
@@ -305,10 +446,16 @@ export const createRouter = (ctx: AppContext) => {
       // Determine order from existing items
       let itemOrder = order;
       if (itemOrder == null) {
-        const allItems = await opensocial.listAllCommunityRecords(communityDid, COL_LISTITEM);
-        const listItems = allItems.filter((r: any) => r.value.listUri === list.uri);
+        const allItems = await opensocial.listAllCommunityRecords(
+          communityDid,
+          COL_LISTITEM
+        );
+        const listItems = allItems.filter(
+          (r: any) => r.value.listUri === list.uri
+        );
         const maxOrder = listItems.reduce(
-          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+          (max, r: any) => Math.max(max, r.value.order ?? 0),
+          -1
         );
         itemOrder = maxOrder + 1;
       }
@@ -356,16 +503,16 @@ export const createRouter = (ctx: AppContext) => {
 
   /**
    * PUT /groups/:communityDid/items/:rkey/status
-   * Set the group status of a list item. Admin only.
+   * Admin only — sets the GROUP's shared status for a list item.
    *
    * Body: { status: 'not-started' | 'in-progress' | 'completed' }
    */
   router.put(
     '/items/:rkey/status',
-    memberOnly,
+    adminOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
       const { status } = req.body;
 
       const validStatuses = ['not-started', 'in-progress', 'completed'];
@@ -378,7 +525,11 @@ export const createRouter = (ctx: AppContext) => {
       // Get the item
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
@@ -387,7 +538,8 @@ export const createRouter = (ctx: AppContext) => {
 
       // Find existing status record for this item
       const allStatuses = await opensocial.listAllCommunityRecords(
-        communityDid, COL_LISTITEM_STATUS
+        communityDid,
+        COL_LISTITEM_STATUS
       );
       const existingStatus = allStatuses.find(
         (r: any) => r.value.listItemUri === item.uri
@@ -397,13 +549,18 @@ export const createRouter = (ctx: AppContext) => {
       if (existingStatus) {
         const statusRkey = rkeyFromUri(existingStatus.uri);
         const result = await opensocial.updateCommunityRecord(
-          communityDid, userDid, COL_LISTITEM_STATUS, statusRkey,
+          communityDid,
+          userDid,
+          COL_LISTITEM_STATUS,
+          statusRkey,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
       } else {
         const result = await opensocial.createCommunityRecord(
-          communityDid, userDid, COL_LISTITEM_STATUS,
+          communityDid,
+          userDid,
+          COL_LISTITEM_STATUS,
           { listItemUri: item.uri, status, updatedBy: userDid, updatedAt: now }
         );
         statusUri = result.uri;
@@ -430,11 +587,15 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, rkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
@@ -458,18 +619,23 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       // Get the item URI
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       const allSegments = await opensocial.listAllCommunityRecords(
-        communityDid, COL_SEGMENT
+        communityDid,
+        COL_SEGMENT
       );
       const segments = allSegments
         .filter((r: any) => r.value.listItemUri === item.uri)
@@ -491,42 +657,89 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       // Get all segments for this item
-      const allSegments = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT);
+      const allSegments = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_SEGMENT
+      );
       const itemSegments = allSegments.filter(
         (r: any) => r.value.listItemUri === item.uri
       );
-      const segmentUris = new Set(itemSegments.map((s) => s.uri));
 
-      // Get ALL progress records once (not per-segment)
-      let allProgress: PdsRecord[] = [];
-      try {
-        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
-      } catch (err) {
-        console.error('Failed to list segment progress:', err);
-      }
+      // Fetch the current user's progress records from their PDS for each segment.
+      // rkey = segmentRkey (by convention set at write time), so we look them
+      // up directly rather than listing the entire collection.
+      const progressBySegment: Record<
+        string,
+        { uri: string; rkey: string; [k: string]: unknown } | null
+      > = {};
 
-      // Group progress by segment URI
-      const progressBySegment: Record<string, Array<{ uri: string; rkey: string; [k: string]: unknown }>> = {};
-      for (const p of allProgress) {
-        const segUri = (p.value as any).segmentUri as string;
-        if (segmentUris.has(segUri)) {
-          if (!progressBySegment[segUri]) progressBySegment[segUri] = [];
-          progressBySegment[segUri].push({
-            uri: p.uri,
-            rkey: rkeyFromUri(p.uri),
-            ...p.value,
-          });
-        }
+      await Promise.all(
+        itemSegments.map(async (seg) => {
+          const segRkey = rkeyFromUri(seg.uri);
+          try {
+            const rec = await agent.api.com.atproto.repo.getRecord({
+              repo: agent.did!,
+              collection: COL_SEGMENT_PROGRESS_USER,
+              rkey: segRkey,
+            });
+            progressBySegment[seg.uri] = {
+              uri: rec.data.uri,
+              rkey: segRkey,
+              memberDid: agent.did!,
+              ...(rec.data.value as object),
+            };
+          } catch {
+            // No progress record for this segment — user hasn't marked it yet
+            progressBySegment[seg.uri] = null;
+          }
+        })
+      );
+
+      // Backfill segment_completions cache for any completed segments
+      const completed = Object.entries(progressBySegment).filter(
+        ([, prog]) => prog && (prog as any).completed
+      );
+      if (completed.length > 0) {
+        await Promise.all(
+          completed.map(([, prog]) => {
+            const p = prog as any;
+            return ctx.db
+              .insertInto('segment_completions')
+              .values({
+                community_did: communityDid,
+                segment_rkey: p.rkey,
+                user_did: agent.did!,
+                completed_at: new Date(p.createdAt || new Date().toISOString()),
+              })
+              .onConflict((oc) => oc.doNothing())
+              .execute()
+              .catch((err) => {
+                ctx.logger.warn(
+                  { err, segment_rkey: p.rkey },
+                  'Failed to backfill segment completion'
+                );
+              });
+          })
+        );
       }
 
       return res.json({ progressBySegment });
@@ -549,20 +762,30 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       let item: PdsRecord;
       try {
-        item = await opensocial.getCommunityRecord(communityDid, COL_LISTITEM, itemRkey);
+        item = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_LISTITEM,
+          itemRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Item not found' });
       }
 
       let {
-        label, segmentType,
-        startPage, endPage, startPercent, endPercent,
-        startChapter, endChapter,
-        assignedDate, order,
+        label,
+        segmentType,
+        startPage,
+        endPage,
+        startPercent,
+        endPercent,
+        startChapter,
+        endChapter,
+        assignedDate,
+        order,
       } = req.body;
 
       if (!label) {
@@ -579,14 +802,18 @@ export const createRouter = (ctx: AppContext) => {
           .executeTakeFirst();
 
         if (mediaItem?.chapterMap) {
-          const map = typeof mediaItem.chapterMap === 'string'
-            ? JSON.parse(mediaItem.chapterMap)
-            : mediaItem.chapterMap;
+          const map =
+            typeof mediaItem.chapterMap === 'string'
+              ? JSON.parse(mediaItem.chapterMap)
+              : mediaItem.chapterMap;
 
-          const startCh = map.chapters?.find((c: any) => c.chapter === startChapter);
-          const endCh = endChapter != null
-            ? map.chapters?.find((c: any) => c.chapter === endChapter)
-            : startCh;
+          const startCh = map.chapters?.find(
+            (c: any) => c.chapter === startChapter
+          );
+          const endCh =
+            endChapter != null
+              ? map.chapters?.find((c: any) => c.chapter === endChapter)
+              : startCh;
 
           if (startCh) {
             startPage = startCh.startPage;
@@ -603,13 +830,15 @@ export const createRouter = (ctx: AppContext) => {
       // Determine order
       if (order == null) {
         const allSegments = await opensocial.listAllCommunityRecords(
-          communityDid, COL_SEGMENT
+          communityDid,
+          COL_SEGMENT
         );
         const itemSegments = allSegments.filter(
           (r: any) => r.value.listItemUri === item.uri
         );
         const maxOrder = itemSegments.reduce(
-          (max, r: any) => Math.max(max, r.value.order ?? 0), -1
+          (max, r: any) => Math.max(max, r.value.order ?? 0),
+          -1
         );
         order = maxOrder + 1;
       }
@@ -624,9 +853,12 @@ export const createRouter = (ctx: AppContext) => {
           listItemUri: item.uri,
           label,
           segmentType,
-          startPage, endPage,
-          startPercent, endPercent,
-          startChapter, endChapter,
+          startPage,
+          endPage,
+          startPercent,
+          endPercent,
+          startChapter,
+          endChapter,
           assignedDate,
           order,
           createdBy: userDid,
@@ -647,9 +879,12 @@ export const createRouter = (ctx: AppContext) => {
           listItemUri: item.uri,
           label,
           segmentType,
-          startPage, endPage,
-          startPercent, endPercent,
-          startChapter, endChapter,
+          startPage,
+          endPage,
+          startPercent,
+          endPercent,
+          startChapter,
+          endChapter,
           assignedDate,
           order,
           createdBy: userDid,
@@ -668,20 +903,30 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       let existing: PdsRecord;
       try {
-        existing = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+        existing = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
       const {
-        label, segmentType,
-        startPage, endPage, startPercent, endPercent,
-        startChapter, endChapter,
-        assignedDate, order,
+        label,
+        segmentType,
+        startPage,
+        endPage,
+        startPercent,
+        endPercent,
+        startChapter,
+        endChapter,
+        assignedDate,
+        order,
       } = req.body;
 
       const val = existing.value as any;
@@ -691,16 +936,23 @@ export const createRouter = (ctx: AppContext) => {
         segmentType: segmentType !== undefined ? segmentType : val.segmentType,
         startPage: startPage !== undefined ? startPage : val.startPage,
         endPage: endPage !== undefined ? endPage : val.endPage,
-        startPercent: startPercent !== undefined ? startPercent : val.startPercent,
+        startPercent:
+          startPercent !== undefined ? startPercent : val.startPercent,
         endPercent: endPercent !== undefined ? endPercent : val.endPercent,
-        startChapter: startChapter !== undefined ? startChapter : val.startChapter,
+        startChapter:
+          startChapter !== undefined ? startChapter : val.startChapter,
         endChapter: endChapter !== undefined ? endChapter : val.endChapter,
-        assignedDate: assignedDate !== undefined ? assignedDate : val.assignedDate,
+        assignedDate:
+          assignedDate !== undefined ? assignedDate : val.assignedDate,
         order: order ?? val.order,
       };
 
       const result = await opensocial.updateCommunityRecord(
-        communityDid, userDid, COL_SEGMENT, rkey, updatedRecord
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkey,
+        updatedRecord
       );
 
       return res.json({
@@ -718,29 +970,30 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const rkey = req.params.rkey as string;
 
       // Delete any posts associated with this segment
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, rkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          rkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      // Delete progress records for this segment
-      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
-      const segProgress = allProgress.filter(
-        (r: any) => r.value.segmentUri === segment.uri
-      );
-      for (const prog of segProgress) {
-        await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
-        );
-      }
+      // NOTE: Segment progress records now live in each user's personal PDS
+      // (app.collectivesocial.feed.segmentprogress). The server cannot enumerate
+      // or delete them on behalf of users; they will become orphaned stale records.
+      // Deferred: a future per-user "clear progress" flow can handle cleanup.
 
       // Delete child posts + reactions
-      const allPosts = await opensocial.listAllCommunityRecords(communityDid, COL_POST);
+      const allPosts = await opensocial.listAllCommunityRecords(
+        communityDid,
+        COL_POST
+      );
       const segmentPosts = allPosts.filter(
         (r: any) => r.value.segmentUri === segment.uri
       );
@@ -748,9 +1001,416 @@ export const createRouter = (ctx: AppContext) => {
         await deletePostAndReactions(communityDid, userDid, post.uri);
       }
 
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT, rkey);
+      await opensocial.deleteCommunityRecord(
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkey
+      );
 
       return res.json({ success: true });
+    })
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // SEGMENT EVENTS (meeting times for book club segments)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * POST /groups/:communityDid/segments/:segmentRkey/event
+   * Attach an event to a segment. Admin only.
+   *
+   * Body: {
+   *   name, description?, startsAt, endsAt?,
+   *   mode? ('virtual'|'inperson'|'hybrid'),
+   *   locations? [{ name?, locality?, region?, country? }],
+   *   uris? [{ uri, name? }]
+   * }
+   */
+  router.post(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      // Verify segment exists
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      // Check for existing event on this segment
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (existing) {
+        return res
+          .status(409)
+          .json({ error: 'Segment already has an event', event: existing });
+      }
+
+      const { name, description, startsAt, endsAt, mode, locations, uris } =
+        req.body;
+
+      if (!name || typeof name !== 'string' || name.trim().length === 0) {
+        return res.status(400).json({ error: 'Event name is required' });
+      }
+
+      try {
+        const event = await groupEventsService.createEvent(
+          communityDid,
+          userDid,
+          {
+            name: name.trim(),
+            description,
+            startsAt,
+            endsAt,
+            mode,
+            status: 'scheduled',
+            segmentUri: segment.uri,
+            locations,
+            uris,
+          }
+        );
+        return res.status(201).json({ event });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to create segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to create segment event' });
+      }
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/event
+   * Get the event attached to a segment. Any member can read.
+   */
+  router.get(
+    '/segments/:segmentRkey/event',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      return res.json({ event });
+    })
+  );
+
+  /**
+   * PUT /groups/:communityDid/segments/:segmentRkey/event
+   * Update the segment's event. Admin only.
+   */
+  router.put(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!existing) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      const {
+        name,
+        description,
+        startsAt,
+        endsAt,
+        mode,
+        status,
+        locations,
+        uris,
+      } = req.body;
+
+      try {
+        const event = await groupEventsService.updateEvent(
+          communityDid,
+          userDid,
+          existing.rkey,
+          { name, description, startsAt, endsAt, mode, status, locations, uris }
+        );
+        return res.json({ event });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to update segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to update segment event' });
+      }
+    })
+  );
+
+  /**
+   * DELETE /groups/:communityDid/segments/:segmentRkey/event
+   * Remove the segment's event. Admin only. Cascades RSVPs.
+   */
+  router.delete(
+    '/segments/:segmentRkey/event',
+    adminOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { userDid, communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const existing = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!existing) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        await groupEventsService.deleteEvent(
+          communityDid,
+          userDid,
+          existing.rkey,
+          existing.uri,
+          ctx.db
+        );
+        return res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to delete segment event');
+        return res
+          .status(500)
+          .json({ error: 'Failed to delete segment event' });
+      }
+    })
+  );
+
+  /**
+   * PUT /groups/:communityDid/segments/:segmentRkey/event/rsvp
+   * RSVP to a segment's event. Any member can RSVP.
+   * Body: { status: 'going' | 'interested' | 'notgoing' }
+   */
+  router.put(
+    '/segments/:segmentRkey/event/rsvp',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+      const { status } = req.body;
+
+      const VALID_RSVP: groupEventsService.RsvpStatus[] = [
+        'going',
+        'interested',
+        'notgoing',
+      ];
+      if (!status || !VALID_RSVP.includes(status)) {
+        return res.status(400).json({
+          error: `status must be one of: ${VALID_RSVP.join(', ')}`,
+        });
+      }
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        const { rsvpUri } = await groupEventsService.rsvpToEvent(
+          agent,
+          communityDid,
+          event.uri,
+          event.cid,
+          event.rkey,
+          status as groupEventsService.RsvpStatus,
+          ctx.db
+        );
+        return res.json({ rsvpUri, status });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to RSVP to segment event');
+        return res.status(500).json({ error: 'Failed to RSVP' });
+      }
+    })
+  );
+
+  /**
+   * DELETE /groups/:communityDid/segments/:segmentRkey/event/rsvp
+   * Remove RSVP from segment event.
+   */
+  router.delete(
+    '/segments/:segmentRkey/event/rsvp',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        await groupEventsService.removeRsvp(
+          agent,
+          event.uri,
+          event.rkey,
+          ctx.db
+        );
+        return res.json({ success: true });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to remove RSVP');
+        return res.status(500).json({ error: 'Failed to remove RSVP' });
+      }
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/event/rsvps
+   * List RSVPs for a segment's event. Any member can read.
+   * Query: status? ('going'|'interested'|'notgoing'), limit?, offset?
+   */
+  router.get(
+    '/segments/:segmentRkey/event/rsvps',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+      const statusFilter = req.query.status as
+        | groupEventsService.RsvpStatus
+        | undefined;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      let segment: PdsRecord;
+      try {
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
+      } catch {
+        return res.status(404).json({ error: 'Segment not found' });
+      }
+
+      const event = await groupEventsService.findEventBySegmentUri(
+        communityDid,
+        segment.uri,
+        ctx.db
+      );
+      if (!event) {
+        return res.status(404).json({ error: 'No event for this segment' });
+      }
+
+      try {
+        const { rows, total } = await groupEventsService.listRsvps(
+          event.uri,
+          ctx.db,
+          { status: statusFilter, limit, offset }
+        );
+
+        return res.json({
+          rsvps: rows.map((r) => ({
+            userDid: r.user_did,
+            status: r.status.split('#')[1],
+            rsvpUri: r.rsvp_uri,
+            rsvpAt: r.rsvp_at,
+          })),
+          total,
+          limit,
+          offset,
+        });
+      } catch (err) {
+        ctx.logger.error({ err }, 'Failed to list RSVPs');
+        return res.status(500).json({ error: 'Failed to list RSVPs' });
+      }
     })
   );
 
@@ -767,28 +1427,93 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
 
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      const allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
-      const segmentProgress = allProgress
-        .filter((r: any) => r.value.segmentUri === segment.uri)
-        .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }));
+      // Progress is now in user's own PDS. Return the current user's record only.
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
 
-      return res.json({ progress: segmentProgress });
+      let progress = null;
+      try {
+        const rec = await agent.api.com.atproto.repo.getRecord({
+          repo: agent.did!,
+          collection: COL_SEGMENT_PROGRESS_USER,
+          rkey: segmentRkey,
+        });
+        progress = {
+          uri: rec.data.uri,
+          rkey: segmentRkey,
+          memberDid: agent.did!,
+          ...(rec.data.value as object),
+        };
+      } catch {
+        // No progress record yet
+      }
+
+      return res.json({ progress });
+    })
+  );
+
+  /**
+   * GET /groups/:communityDid/segments/:segmentRkey/roster
+   * Fetch all members' completion status for a segment, enriched with profiles.
+   * Reads from the segment_completions cache table.
+   */
+  router.get(
+    '/segments/:segmentRkey/roster',
+    memberOnly,
+    handler(async (req: GroupAuthRequest, res: Response) => {
+      const { communityDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      // Query cached completions
+      const completions = await ctx.db
+        .selectFrom('segment_completions')
+        .selectAll()
+        .where('community_did', '=', communityDid)
+        .where('segment_rkey', '=', segmentRkey)
+        .execute();
+
+      // Enrich with profiles
+      const dids = completions.map((c) => c.user_did);
+      const profiles =
+        dids.length > 0
+          ? await userProfileService.enrichWithUserProfiles(dids)
+          : {};
+
+      const roster = completions.map((c) => ({
+        did: c.user_did,
+        handle: profiles[c.user_did]?.handle || c.user_did.slice(0, 20) + '…',
+        displayName: profiles[c.user_did]?.displayName,
+        avatar: profiles[c.user_did]?.avatar,
+        completedAt: c.completed_at.toISOString(),
+      }));
+
+      return res.json({ roster });
     })
   );
 
   /**
    * POST /groups/:communityDid/segments/:segmentRkey/progress
    * Mark the current user as having completed a segment.
-   * Also syncs to the user's personal progress (reviewsegment + useritem).
+   *
+   * Writes app.collectivesocial.feed.segmentprogress to the USER's own PDS
+   * using the segmentRkey as the record rkey (idempotent putRecord).
+   * The sync calls below (/reviewsegments and /collections/quick-add) remain
+   * as the primary path for updating the user's personal library (B5 pattern).
    *
    * Body: {} (no fields needed — uses auth context)
    */
@@ -797,71 +1522,127 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
+
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
 
       let segment: PdsRecord;
       try {
-        segment = await opensocial.getCommunityRecord(communityDid, COL_SEGMENT, segmentRkey);
+        segment = await opensocial.getCommunityRecord(
+          communityDid,
+          COL_SEGMENT,
+          segmentRkey
+        );
       } catch {
         return res.status(404).json({ error: 'Segment not found' });
       }
 
-      // Check for duplicate — member may have already marked this segment
-      let allProgress: PdsRecord[];
+      // Check for duplicate using user's own PDS (rkey = segmentRkey is idempotent)
       try {
-        allProgress = await opensocial.listAllCommunityRecords(communityDid, COL_SEGMENT_PROGRESS);
-      } catch (err) {
-        console.error('Failed to list segment progress records:', err);
-        allProgress = [];
-      }
-
-      const existing = allProgress.find(
-        (r: any) => r.value.segmentUri === segment.uri && r.value.memberDid === userDid
-      );
-      if (existing) {
-        return res.json({
-          progress: { uri: existing.uri, rkey: rkeyFromUri(existing.uri), ...existing.value },
-          alreadyExists: true,
+        const existingRecord = await agent.api.com.atproto.repo.getRecord({
+          repo: agent.did!,
+          collection: COL_SEGMENT_PROGRESS_USER,
+          rkey: segmentRkey,
         });
+        if (existingRecord.data) {
+          // Backfill cache if missing
+          const existingVal = existingRecord.data.value as any;
+          await ctx.db
+            .insertInto('segment_completions')
+            .values({
+              community_did: communityDid,
+              segment_rkey: segmentRkey,
+              user_did: userDid!,
+              completed_at: new Date(
+                existingVal.createdAt || new Date().toISOString()
+              ),
+            })
+            .onConflict((oc) => oc.doNothing())
+            .execute()
+            .catch((err) => {
+              ctx.logger.warn(
+                { err, segment_rkey: segmentRkey },
+                'Failed to backfill segment completion'
+              );
+            });
+
+          return res.json({
+            progress: {
+              uri: existingRecord.data.uri,
+              rkey: segmentRkey,
+              ...(existingRecord.data.value as object),
+            },
+            alreadyExists: true,
+          });
+        }
+      } catch {
+        // Record doesn't exist yet — proceed to create
       }
 
       const now = new Date().toISOString();
+      const progressRecord = {
+        $type: COL_SEGMENT_PROGRESS_USER,
+        segmentUri: segment.uri,
+        communityDid,
+        completed: true,
+        createdAt: now,
+      };
 
-      let pdsRecord;
+      let userPdsResponse;
       try {
-        pdsRecord = await opensocial.createCommunityRecord(
-          communityDid,
-          userDid,
-          COL_SEGMENT_PROGRESS,
-          {
-            segmentUri: segment.uri,
-            memberDid: userDid,
-            completed: true,
-            completedAt: now,
-          }
-        );
-      } catch (err: any) {
-        console.error('Failed to create segment progress record:', err);
-        return res.status(err.status || 500).json({
-          error: err.message || 'Failed to create progress record',
+        userPdsResponse = await agent.api.com.atproto.repo.putRecord({
+          repo: agent.did!,
+          collection: COL_SEGMENT_PROGRESS_USER,
+          rkey: segmentRkey,
+          record: progressRecord as any,
         });
+      } catch (err: any) {
+        ctx.logger.error(
+          { err },
+          'Failed to write segment progress to user PDS'
+        );
+        return res
+          .status(500)
+          .json({ error: 'Failed to create progress record' });
+      }
+
+      // Cache completion in Postgres for roster queries
+      try {
+        await ctx.db
+          .insertInto('segment_completions')
+          .values({
+            community_did: communityDid,
+            segment_rkey: segmentRkey,
+            user_did: userDid!,
+            completed_at: new Date(now),
+          })
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      } catch (cacheErr) {
+        ctx.logger.warn(
+          { err: cacheErr },
+          'Failed to cache segment completion'
+        );
       }
 
       // ── Sync to personal progress ──────────────────────────────
       // If the segment has an endPercent, create/update a personal
       // reviewsegment at that percentage for the user's library.
+      // These calls are the primary B5 sync — they remain unchanged.
       const segVal = segment.value as any;
       if (segVal.endPercent != null) {
         try {
-          // Forward to the personal reviewsegment endpoint
-          // This is an internal call — the user's session cookie is on the request
           const itemRecord = await opensocial.getCommunityRecord(
-            communityDid, COL_LISTITEM, rkeyFromUri(segVal.listItemUri)
+            communityDid,
+            COL_LISTITEM,
+            rkeyFromUri(segVal.listItemUri)
           );
           const itemVal = itemRecord.value as any;
 
           if (itemVal.mediaItemId) {
-            // Create personal review segment via internal API call
             const syncBody = {
               percentage: segVal.endPercent,
               title: segVal.label,
@@ -869,30 +1650,23 @@ export const createRouter = (ctx: AppContext) => {
               mediaType: itemVal.mediaType,
             };
 
-            // Use the user's cookie to call the personal reviewsegment endpoint
             const cookie = req.headers.cookie;
             if (cookie) {
               const baseUrl = `${req.protocol}://${req.get('host')}`;
               await fetch(`${baseUrl}/reviewsegments`, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Cookie: cookie,
-                },
+                headers: { 'Content-Type': 'application/json', Cookie: cookie },
                 body: JSON.stringify(syncBody),
               }).catch((err) => {
-                console.warn('Failed to sync personal review segment:', err);
+                ctx.logger.warn(
+                  { err },
+                  'Failed to sync personal review segment'
+                );
               });
 
-              // Also ensure the user's personal useritem status is 'in-progress'
-              // if it's currently 'want'. We do this via the quick-add endpoint
-              // which handles finding/creating the default list and upserting useritem.
               await fetch(`${baseUrl}/collections/quick-add`, {
                 method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Cookie: cookie,
-                },
+                headers: { 'Content-Type': 'application/json', Cookie: cookie },
                 body: JSON.stringify({
                   mediaItemId: itemVal.mediaItemId,
                   mediaType: itemVal.mediaType,
@@ -901,41 +1675,77 @@ export const createRouter = (ctx: AppContext) => {
                   status: 'in-progress',
                 }),
               }).catch((err) => {
-                console.warn('Failed to sync personal collection:', err);
+                ctx.logger.warn({ err }, 'Failed to sync personal collection');
               });
             }
           }
         } catch (syncErr) {
-          console.warn('Failed to sync personal progress:', syncErr);
-          // Non-fatal — the group progress is still recorded
+          ctx.logger.warn({ err: syncErr }, 'Failed to sync personal progress');
+          // Non-fatal — the user PDS progress record is already written
         }
       }
 
       return res.json({
         progress: {
-          uri: pdsRecord.uri,
-          rkey: rkeyFromUri(pdsRecord.uri),
+          uri: userPdsResponse.data.uri,
+          rkey: segmentRkey,
           segmentUri: segment.uri,
-          memberDid: userDid,
+          communityDid,
           completed: true,
-          completedAt: now,
+          createdAt: now,
         },
       });
     })
   );
 
   /**
-   * DELETE /groups/:communityDid/segments/:segmentRkey/progress/:rkey
+   * DELETE /groups/:communityDid/segments/:segmentRkey/progress
    * Unmark the current user's completion of a segment.
+   * Deletes the app.collectivesocial.feed.segmentprogress record from user PDS.
+   * rkey = segmentRkey (matches the idempotent putRecord on creation).
    */
   router.delete(
-    '/segments/:segmentRkey/progress/:rkey',
+    '/segments/:segmentRkey/progress',
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
-      const { userDid, communityDid } = req.groupAuth!;
-      const { rkey } = req.params;
+      const { communityDid, userDid } = req.groupAuth!;
+      const segmentRkey = req.params.segmentRkey as string;
 
-      await opensocial.deleteCommunityRecord(communityDid, userDid, COL_SEGMENT_PROGRESS, rkey);
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        await agent.api.com.atproto.repo.deleteRecord({
+          repo: agent.did!,
+          collection: COL_SEGMENT_PROGRESS_USER,
+          rkey: segmentRkey,
+        });
+      } catch (err: any) {
+        ctx.logger.error(
+          { err },
+          'Failed to delete segment progress from user PDS'
+        );
+        return res
+          .status(500)
+          .json({ error: 'Failed to delete progress record' });
+      }
+
+      // Remove from cache
+      try {
+        await ctx.db
+          .deleteFrom('segment_completions')
+          .where('community_did', '=', communityDid)
+          .where('segment_rkey', '=', segmentRkey)
+          .where('user_did', '=', userDid!)
+          .execute();
+      } catch (cacheErr) {
+        ctx.logger.warn(
+          { err: cacheErr },
+          'Failed to remove cached completion'
+        );
+      }
 
       return res.json({ success: true });
     })
@@ -954,7 +1764,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { segmentRkey } = req.params;
+      const segmentRkey = req.params.segmentRkey as string;
 
       const agent = await getSessionAgent(req, res, ctx);
       if (!agent) {
@@ -995,7 +1805,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ posts: enrichedThreads });
       } catch (err) {
-        console.error('Failed to fetch posts:', err);
+        ctx.logger.error({ err }, 'Failed to fetch posts');
         return res.status(500).json({ error: 'Failed to fetch posts' });
       }
     })
@@ -1010,7 +1820,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { itemRkey } = req.params;
+      const itemRkey = req.params.itemRkey as string;
 
       const agent = await getSessionAgent(req, res, ctx);
       if (!agent) {
@@ -1051,7 +1861,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ posts: enrichedThreads });
       } catch (err) {
-        console.error('Failed to fetch posts:', err);
+        ctx.logger.error({ err }, 'Failed to fetch posts');
         return res.status(500).json({ error: 'Failed to fetch posts' });
       }
     })
@@ -1140,7 +1950,7 @@ export const createRouter = (ctx: AppContext) => {
           indexUri,
         });
       } catch (err) {
-        console.error('Failed to create post:', err);
+        ctx.logger.error({ err }, 'Failed to create post');
         return res.status(500).json({ error: 'Failed to create post' });
       }
     })
@@ -1177,8 +1987,13 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         if (authorDid === userDid) {
-          // User deleting their own post
-          await groupPostService.deleteGroupPost(agent, postUri);
+          // User deleting their own post — also cleans up the community postindex
+          await groupPostService.deleteGroupPost(
+            agent,
+            postUri,
+            communityDid,
+            userDid
+          );
         } else if (isAdmin) {
           // Admin marking post as deleted
           await groupPostService.adminDeleteGroupPost(
@@ -1194,7 +2009,7 @@ export const createRouter = (ctx: AppContext) => {
 
         return res.json({ success: true });
       } catch (err) {
-        console.error('Failed to delete post:', err);
+        ctx.logger.error({ err }, 'Failed to delete post');
         return res.status(500).json({ error: 'Failed to delete post' });
       }
     })
@@ -1213,19 +2028,22 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { communityDid } = req.groupAuth!;
-      const { postRkey } = req.params;
+      const postRkey = req.params.postRkey as string;
 
       let post: PdsRecord;
       try {
         post = await opensocial.getCommunityRecord(
-          communityDid, COL_POST, postRkey
+          communityDid,
+          COL_POST,
+          postRkey
         );
       } catch {
         return res.status(404).json({ error: 'Post not found' });
       }
 
       const allReactions = await opensocial.listAllCommunityRecords(
-        communityDid, COL_REACTION
+        communityDid,
+        COL_REACTION
       );
       const postReactions = allReactions.filter(
         (r: any) => r.value.postUri === post.uri
@@ -1260,7 +2078,7 @@ export const createRouter = (ctx: AppContext) => {
     memberOnly,
     handler(async (req: GroupAuthRequest, res: Response) => {
       const { userDid, communityDid } = req.groupAuth!;
-      const { postRkey } = req.params;
+      const postRkey = req.params.postRkey as string;
       const { emoji } = req.body;
 
       if (!emoji) {
@@ -1270,7 +2088,9 @@ export const createRouter = (ctx: AppContext) => {
       let post: PdsRecord;
       try {
         post = await opensocial.getCommunityRecord(
-          communityDid, COL_POST, postRkey
+          communityDid,
+          COL_POST,
+          postRkey
         );
       } catch {
         return res.status(404).json({ error: 'Post not found' });
@@ -1278,7 +2098,8 @@ export const createRouter = (ctx: AppContext) => {
 
       // Check for existing reaction (toggle off)
       const allReactions = await opensocial.listAllCommunityRecords(
-        communityDid, COL_REACTION
+        communityDid,
+        COL_REACTION
       );
       const existing = allReactions.find(
         (r: any) =>
@@ -1289,7 +2110,10 @@ export const createRouter = (ctx: AppContext) => {
 
       if (existing) {
         await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_REACTION, rkeyFromUri(existing.uri)
+          communityDid,
+          userDid,
+          COL_REACTION,
+          rkeyFromUri(existing.uri)
         );
         return res.json({ action: 'removed', emoji });
       }
@@ -1297,7 +2121,9 @@ export const createRouter = (ctx: AppContext) => {
       // Create new reaction
       const now = new Date().toISOString();
       const pdsRecord = await opensocial.createCommunityRecord(
-        communityDid, userDid, COL_REACTION,
+        communityDid,
+        userDid,
+        COL_REACTION,
         { postUri: post.uri, emoji, authorDid: userDid, createdAt: now }
       );
 
@@ -1501,7 +2327,8 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete child replies recursively
     const allPosts = await opensocial.listAllCommunityRecords(
-      communityDid, COL_POST
+      communityDid,
+      COL_POST
     );
     const childPosts = allPosts.filter(
       (r: any) => r.value.parentPostUri === postUri
@@ -1512,20 +2339,27 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete reactions on this post
     const allReactions = await opensocial.listAllCommunityRecords(
-      communityDid, COL_REACTION
+      communityDid,
+      COL_REACTION
     );
     const postReactions = allReactions.filter(
       (r: any) => r.value.postUri === postUri
     );
     for (const reaction of postReactions) {
       await opensocial.deleteCommunityRecord(
-        communityDid, userDid, COL_REACTION, rkeyFromUri(reaction.uri)
+        communityDid,
+        userDid,
+        COL_REACTION,
+        rkeyFromUri(reaction.uri)
       );
     }
 
     // Delete the post
     await opensocial.deleteCommunityRecord(
-      communityDid, userDid, COL_POST, postRkey
+      communityDid,
+      userDid,
+      COL_POST,
+      postRkey
     );
   }
 
@@ -1538,28 +2372,21 @@ export const createRouter = (ctx: AppContext) => {
   ) {
     // Delete segments and their posts
     const allSegments = await opensocial.listAllCommunityRecords(
-      communityDid, COL_SEGMENT
+      communityDid,
+      COL_SEGMENT
     );
     const itemSegments = allSegments.filter(
       (r: any) => r.value.listItemUri === itemUri
     );
     for (const seg of itemSegments) {
-      // Delete progress records for this segment
-      const allProgress = await opensocial.listAllCommunityRecords(
-        communityDid, COL_SEGMENT_PROGRESS
-      );
-      const segProgress = allProgress.filter(
-        (r: any) => r.value.segmentUri === seg.uri
-      );
-      for (const prog of segProgress) {
-        await opensocial.deleteCommunityRecord(
-          communityDid, userDid, COL_SEGMENT_PROGRESS, rkeyFromUri(prog.uri)
-        );
-      }
+      // NOTE: Segment progress now lives in each user's personal PDS.
+      // The server cannot enumerate or delete on behalf of users.
+      // These records become stale but harmless when a segment is removed.
 
       // Delete posts for this segment
       const allPosts = await opensocial.listAllCommunityRecords(
-        communityDid, COL_POST
+        communityDid,
+        COL_POST
       );
       const segPosts = allPosts.filter(
         (r: any) => r.value.segmentUri === seg.uri
@@ -1568,17 +2395,20 @@ export const createRouter = (ctx: AppContext) => {
         await deletePostAndReactions(communityDid, userDid, post.uri);
       }
       await opensocial.deleteCommunityRecord(
-        communityDid, userDid, COL_SEGMENT, rkeyFromUri(seg.uri)
+        communityDid,
+        userDid,
+        COL_SEGMENT,
+        rkeyFromUri(seg.uri)
       );
     }
 
     // Delete posts directly on the item (not tied to a segment)
     const allPosts = await opensocial.listAllCommunityRecords(
-      communityDid, COL_POST
+      communityDid,
+      COL_POST
     );
     const itemPosts = allPosts.filter(
-      (r: any) =>
-        r.value.listItemUri === itemUri && !r.value.segmentUri
+      (r: any) => r.value.listItemUri === itemUri && !r.value.segmentUri
     );
     for (const post of itemPosts) {
       await deletePostAndReactions(communityDid, userDid, post.uri);
@@ -1586,7 +2416,8 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete status record for this item
     const allStatuses = await opensocial.listAllCommunityRecords(
-      communityDid, COL_LISTITEM_STATUS
+      communityDid,
+      COL_LISTITEM_STATUS
     );
     const itemStatus = allStatuses.find(
       (r: any) => r.value.listItemUri === itemUri
@@ -1602,7 +2433,10 @@ export const createRouter = (ctx: AppContext) => {
 
     // Delete the item itself
     await opensocial.deleteCommunityRecord(
-      communityDid, userDid, COL_LISTITEM, itemRkey
+      communityDid,
+      userDid,
+      COL_LISTITEM,
+      itemRkey
     );
   }
 

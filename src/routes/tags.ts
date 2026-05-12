@@ -61,7 +61,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
   // Get items for a specific tag (tag search page)
   app.get('/tags/:tagSlug/items', async (req: Request, res: Response) => {
     try {
-      const { tagSlug } = req.params;
+      const tagSlug = req.params.tagSlug as string;
       const { sort = 'relevant' } = req.query;
 
       // Find the tag by slug
@@ -157,7 +157,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
   // Get tags for a specific media item
   app.get('/media/:itemId/tags', async (req: Request, res: Response) => {
     try {
-      const { itemId } = req.params;
+      const itemId = req.params.itemId as string;
 
       // Exclude tags that have pending reports for this item
       const tags = await (ctx.db as any)
@@ -201,7 +201,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { itemId } = req.params;
+      const itemId = req.params.itemId as string;
       let { tagName } = req.body;
 
       if (
@@ -335,7 +335,8 @@ export const createRouter = (ctx: AppContext, app: Express) => {
           return res.status(403).json({ error: 'Admin access required' });
         }
 
-        const { itemId, tagId } = req.params;
+        const itemId = req.params.itemId as string;
+        const tagId = req.params.tagId as string;
 
         // Delete all tag associations for this item and tag
         const result = await (ctx.db as any)
@@ -499,7 +500,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
         return res.status(403).json({ error: 'Admin access required' });
       }
 
-      const { tagId } = req.params;
+      const tagId = req.params.tagId as string;
       let { name } = req.body;
 
       if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -669,7 +670,8 @@ export const createRouter = (ctx: AppContext, app: Express) => {
           return res.status(401).json({ error: 'Not authenticated' });
         }
 
-        const { itemId, tagId } = req.params;
+        const itemId = req.params.itemId as string;
+        const tagId = req.params.tagId as string;
         const { reason } = req.body;
 
         if (!reason || !reason.trim()) {
@@ -807,7 +809,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
           return res.status(403).json({ error: 'Admin access required' });
         }
 
-        const { reportId } = req.params;
+        const reportId = req.params.reportId as string;
 
         // Get the report details
         const report = await (ctx.db as any)
@@ -874,7 +876,7 @@ export const createRouter = (ctx: AppContext, app: Express) => {
           return res.status(403).json({ error: 'Admin access required' });
         }
 
-        const { reportId } = req.params;
+        const reportId = req.params.reportId as string;
 
         await (ctx.db as any)
           .updateTable('tag_reports')

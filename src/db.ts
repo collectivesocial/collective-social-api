@@ -3,15 +3,8 @@ import { Pool } from 'pg';
 import { AuthSession, AuthState } from './models/auth';
 import { MediaItem } from './models/media';
 import { User } from './models/user';
-import {
-  GroupNotification,
-} from './models/groupContent';
-import {
-  Kysely,
-  PostgresDialect,
-  Generated,
-  sql,
-} from 'kysely';
+import { GroupNotification } from './models/groupContent';
+import { Kysely, PostgresDialect, Generated, sql } from 'kysely';
 
 export type PublicReview = {
   id: number;
@@ -40,8 +33,37 @@ export type Feedback = {
 export type FeedEvent = {
   id: number;
   eventName: string;
+  eventType: string | null;
   mediaLink: string | null;
   userDid: string;
+  createdAt: Date;
+};
+
+export type UserActivityLog = {
+  did: string;
+  activity_date: string;
+  activity_count: number;
+};
+
+export type BlueskyShareEvent = {
+  id: Generated<number>;
+  userDid: string;
+  shareType: string;
+  shareTargetId: string | null;
+  createdAt: Date;
+};
+
+export type Goal = {
+  id: Generated<number>;
+  uri: string;
+  authorDid: string;
+  title: string;
+  mediaType: string | null;
+  targetCount: number;
+  startDate: Date;
+  endDate: Date;
+  visibility: string;
+  cachedCompletedCount: number;
   createdAt: Date;
 };
 
@@ -53,6 +75,7 @@ export type ShareLink = {
   mediaType: string | null;
   collectionUri: string | null;
   reviewId: number | null;
+  goalUri: string | null;
   timesClicked: Generated<number>;
   createdAt: Date;
   updatedAt: Date;
@@ -106,6 +129,13 @@ export type Reaction = {
   createdAt: Date;
 };
 
+export type SegmentCompletion = {
+  community_did: string;
+  segment_rkey: string;
+  user_did: string;
+  completed_at: Date;
+};
+
 export type DatabaseSchema = {
   auth_session: AuthSession;
   auth_state: AuthState;
@@ -121,6 +151,10 @@ export type DatabaseSchema = {
   comments: PublicComment;
   reactions: Reaction;
   group_notifications: GroupNotification;
+  user_activity_log: UserActivityLog;
+  bluesky_share_events: BlueskyShareEvent;
+  goals: Goal;
+  segment_completions: SegmentCompletion;
 };
 
 // APIs

@@ -5,11 +5,26 @@ import { getSessionAgent } from '../auth/agent';
 import * as opensocial from '../services/opensocial';
 import { rkeyFromUri, resolveUserPermissions } from '../services/opensocial';
 import type { ResolvedCollectionPermission } from '../services/opensocial';
+import { config } from '../config';
+
+/** HTML-escape user-controlled strings for safe inclusion in OG meta tags. */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
 
-  // GET /groups — list all communities from OpenSocial (enriched with display names)
+  // GET /groups — list communities from OpenSocial (enriched with display names).
+  // Supports pagination via `limit` and `cursor` query params. Default page size
+  // is 10 for the default discover list; clients may request a larger limit
+  // (e.g. when running a search). Returns a `cursor` for the next page when
+  // more results are available.
   router.get(
     '/',
     handler(async (req: Request, res: Response) => {
@@ -17,17 +32,40 @@ export const createRouter = (ctx: AppContext) => {
       const userDid = agent?.did ?? undefined;
 
       try {
-        const query = typeof req.query.query === 'string' ? req.query.query.trim() : undefined;
-        const communities = await opensocial.listCommunities(userDid, query);
+        const query =
+          typeof req.query.query === 'string'
+            ? req.query.query.trim()
+            : undefined;
+        const cursor =
+          typeof req.query.cursor === 'string' && req.query.cursor.length > 0
+            ? req.query.cursor
+            : undefined;
+        const parsedLimit =
+          typeof req.query.limit === 'string'
+            ? parseInt(req.query.limit, 10)
+            : NaN;
+        const limit =
+          Number.isFinite(parsedLimit) && parsedLimit > 0
+            ? Math.min(parsedLimit, 100)
+            : 10;
+
+        const { communities, cursor: nextCursor } =
+          await opensocial.listCommunities({
+            userDid,
+            query,
+            limit,
+            cursor,
+          });
 
         // If user is authenticated, check which communities they're a member of
         const memberCommunityDids = new Set<string>();
         if (agent) {
           try {
-            const membershipsResponse = await agent.com.atproto.repo.listRecords({
-              repo: agent.did!,
-              collection: 'community.opensocial.membership',
-            });
+            const membershipsResponse =
+              await agent.com.atproto.repo.listRecords({
+                repo: agent.did!,
+                collection: 'community.opensocial.membership',
+              });
             for (const record of membershipsResponse.data.records) {
               const value = record.value as { community?: string };
               if (value.community) {
@@ -35,24 +73,259 @@ export const createRouter = (ctx: AppContext) => {
               }
             }
           } catch (err) {
-            console.warn('Could not fetch user memberships:', err);
+            ctx.logger.warn({ err }, 'Could not fetch user memberships');
           }
         }
 
-        // display_name comes from the list endpoint directly;
-        // description is only available on the detail view.
-        const result = communities.map((community) => ({
-          ...community,
-          display_name: community.display_name || null,
-          description: null,
-          is_member: memberCommunityDids.has(community.did),
-        }));
+        // The OpenSocial XRPC returns camelCase keys (displayName, isAdmin,
+        // createdAt). Map them back to the snake_case shape that the web
+        // client (and our Community interface) expects.
+        const result = communities.map((community) => {
+          const c = community as any;
+          return {
+            did: c.did,
+            handle: c.handle,
+            pds_host: c.pds_host || c.pdsHost || null,
+            display_name: c.display_name || c.displayName || null,
+            description: null,
+            type: c.type || 'open',
+            avatar: c.avatar ?? null,
+            created_at: c.created_at || c.createdAt || null,
+            is_admin: c.is_admin ?? c.isAdmin ?? false,
+            is_member: memberCommunityDids.has(c.did),
+          };
+        });
 
-        return res.json({ communities: result });
+        return res.json({ communities: result, cursor: nextCursor });
       } catch (err: any) {
-        console.error('Error listing communities:', err.message);
+        ctx.logger.error({ err }, 'Error listing communities');
         return res.status(err.status || 500).json({ error: err.message });
       }
+    })
+  );
+
+  // GET /groups/mine — list communities the authenticated user is a member of.
+  // Reads the user's membership records from their PDS, then enriches each with
+  // community details. Not paginated — assumes a user belongs to a manageable
+  // number of communities.
+  router.get(
+    '/mine',
+    handler(async (req: Request, res: Response) => {
+      const agent = await getSessionAgent(req, res, ctx);
+      if (!agent) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      try {
+        // Collect every membership DID from the user's PDS.
+        const memberCommunityDids = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const resp = await agent.com.atproto.repo.listRecords({
+            repo: agent.did!,
+            collection: 'community.opensocial.membership',
+            limit: 100,
+            cursor,
+          });
+          for (const record of resp.data.records) {
+            const value = record.value as { community?: string };
+            if (value.community) memberCommunityDids.add(value.community);
+          }
+          cursor = resp.data.cursor;
+        } while (cursor);
+
+        if (memberCommunityDids.size === 0) {
+          return res.json({ communities: [] });
+        }
+
+        // Enrich each membership with community details in parallel. We also
+        // track communities that the OpenSocial API refuses to return (typically
+        // because the community admin has disabled or not yet approved this
+        // app's visibility), so the UI can surface "you're a member but the
+        // community isn't accessible here" rather than silently hiding it.
+        type Enriched = {
+          did: string;
+          handle: string;
+          pds_host: string | null;
+          display_name: string | null;
+          description: string | null;
+          type: string;
+          created_at: string | null;
+          is_admin: boolean;
+          is_member: boolean;
+        };
+        type Inaccessible = {
+          did: string;
+          status: number | null;
+          reason: string;
+        };
+
+        const settled = await Promise.all(
+          Array.from(memberCommunityDids).map(
+            async (
+              did
+            ): Promise<
+              | { kind: 'ok'; community: Enriched }
+              | { kind: 'inaccessible'; entry: Inaccessible }
+            > => {
+              try {
+                const { community, is_admin } = await opensocial.getCommunity(
+                  did,
+                  agent.did!
+                );
+                // The XRPC response actually uses camelCase keys; alias both for
+                // backward compatibility with the existing list response shape.
+                const c = community as any;
+                return {
+                  kind: 'ok',
+                  community: {
+                    did: c.did,
+                    handle: c.handle,
+                    pds_host: c.pds_host || c.pdsHost || null,
+                    display_name: c.display_name || c.displayName || null,
+                    description: c.description || null,
+                    type: c.type || 'open',
+                    created_at: c.created_at || c.createdAt || null,
+                    is_admin,
+                    is_member: true,
+                  },
+                };
+              } catch (err: any) {
+                // Use structured logging so the actual reason is visible. The
+                // most common cause is OpenSocial's per-app visibility check
+                // (HTTP 403 PermissionDenied), which means atmosphere.community
+                // (or similar) hasn't enabled Collective Social as an app.
+                const status: number | null =
+                  typeof err?.status === 'number' ? err.status : null;
+                const reason: string =
+                  typeof err?.message === 'string'
+                    ? err.message
+                    : 'Unknown error fetching community';
+                ctx.logger.warn(
+                  { err, did, status, reason },
+                  'Skipping inaccessible community in /groups/mine'
+                );
+                return {
+                  kind: 'inaccessible',
+                  entry: { did, status, reason },
+                };
+              }
+            }
+          )
+        );
+
+        const communities: Enriched[] = [];
+        const inaccessibleCommunities: Inaccessible[] = [];
+        for (const r of settled) {
+          if (r.kind === 'ok') communities.push(r.community);
+          else inaccessibleCommunities.push(r.entry);
+        }
+
+        return res.json({ communities, inaccessibleCommunities });
+      } catch (err: any) {
+        ctx.logger.error(
+          { err },
+          'Error listing user communities in /groups/mine'
+        );
+        return res.status(err.status || 500).json({ error: err.message });
+      }
+    })
+  );
+
+  /**
+   * GET /groups/:did/share
+   *
+   * Public, unauthenticated landing endpoint optimized for link previews on
+   * platforms like Bluesky, Mastodon, Slack, etc. Returns an HTML page with
+   * Open Graph and Twitter Card meta tags (display name, description, avatar)
+   * and then redirects the browser to the SPA at `${clientUrl}/groups/:did`.
+   *
+   * Bluesky's link unfurler hits this endpoint, reads the meta tags, and
+   * shows a rich card. Real users get bounced through to the React app via
+   * `<meta http-equiv="refresh">` + a JS fallback.
+   */
+  router.get(
+    '/:did/share',
+    handler(async (req: Request, res: Response) => {
+      const did = req.params.did as string;
+      const clientUrl = config.clientUrl || 'http://127.0.0.1:5173';
+      const targetUrl = `${clientUrl}/groups/${encodeURIComponent(did)}`;
+
+      // Render a minimal HTML preview. Falls back to generic copy if the
+      // community can't be loaded so crawlers still get *something* useful.
+      let title = 'Join this group on Collective';
+      let description =
+        'Discover and join book clubs, watch parties, and more on Collective.';
+      let imageUrl = '';
+      let pageUrl = targetUrl;
+
+      try {
+        const { community } = await opensocial.getCommunity(did);
+        const displayName = community.display_name || community.handle;
+        title = `Join ${displayName} on Collective`;
+        if (community.description && community.description.trim().length > 0) {
+          description = community.description.trim();
+        } else {
+          description = `Join @${community.handle} on Collective \u2014 a community for tracking and sharing what you read, watch, and listen to.`;
+        }
+        if (community.avatar) imageUrl = community.avatar;
+        // Prefer the canonical service URL when we have one so unfurlers
+        // resolve canonical/og:url to a stable host.
+        pageUrl = config.serviceUrl
+          ? `${config.serviceUrl}/groups/${encodeURIComponent(did)}/share`
+          : pageUrl;
+      } catch (err: any) {
+        ctx.logger.warn(
+          { err: err?.message, did },
+          'Could not load community for share preview \u2014 serving generic OG tags'
+        );
+      }
+
+      const safeTitle = escapeHtml(title);
+      const safeDescription = escapeHtml(description);
+      const safeImageUrl = imageUrl ? escapeHtml(imageUrl) : '';
+      const safePageUrl = escapeHtml(pageUrl);
+      const safeTargetUrl = escapeHtml(targetUrl);
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeTitle}</title>
+  <meta name="description" content="${safeDescription}">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="${safePageUrl}">
+  <meta property="og:title" content="${safeTitle}">
+  <meta property="og:description" content="${safeDescription}">
+  <meta property="og:site_name" content="Collective">
+  ${
+    safeImageUrl
+      ? `<meta property="og:image" content="${safeImageUrl}">
+  <meta property="og:image:alt" content="${safeTitle}">`
+      : ''
+  }
+
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="${safeImageUrl ? 'summary_large_image' : 'summary'}">
+  <meta name="twitter:url" content="${safePageUrl}">
+  <meta name="twitter:title" content="${safeTitle}">
+  <meta name="twitter:description" content="${safeDescription}">
+  ${safeImageUrl ? `<meta name="twitter:image" content="${safeImageUrl}">` : ''}
+
+  <!-- Send real users on to the SPA -->
+  <meta http-equiv="refresh" content="0;url=${safeTargetUrl}">
+  <link rel="canonical" href="${safeTargetUrl}">
+  <script>window.location.replace(${JSON.stringify(targetUrl)});</script>
+</head>
+<body>
+  <p>Redirecting to <a href="${safeTargetUrl}">Collective</a>...</p>
+</body>
+</html>`;
+
+      return res.type('html').send(html);
     })
   );
 
@@ -65,7 +338,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:did/permissions',
     handler(async (req: Request, res: Response) => {
-      const { did } = req.params;
+      const did = req.params.did as string;
       const agent = await getSessionAgent(req, res, ctx);
       const userDid = agent?.did ?? undefined;
 
@@ -73,7 +346,7 @@ export const createRouter = (ctx: AppContext) => {
         const permissions = await resolveUserPermissions(did, userDid);
         return res.json({ permissions });
       } catch (err: any) {
-        console.error('Error resolving permissions:', err.message);
+        ctx.logger.error({ err }, 'Error resolving permissions');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -85,7 +358,7 @@ export const createRouter = (ctx: AppContext) => {
   router.get(
     '/:did',
     handler(async (req: Request, res: Response) => {
-      const { did } = req.params;
+      const did = req.params.did as string;
       const agent = await getSessionAgent(req, res, ctx);
       const userDid = agent?.did ?? undefined;
 
@@ -101,7 +374,10 @@ export const createRouter = (ctx: AppContext) => {
             isMember = membership.isMember;
             isAdmin = membership.isAdmin;
           } catch (memberErr: any) {
-            console.error(`Membership check failed for ${did}:`, memberErr.message || memberErr);
+            ctx.logger.warn(
+              { err: memberErr, communityDid: did },
+              'Membership check failed'
+            );
             // Not a member or check failed — that's fine for public view
           }
         }
@@ -109,20 +385,55 @@ export const createRouter = (ctx: AppContext) => {
         // Fetch group lists from PDS (source of truth)
         const COL_LIST = 'app.collectivesocial.group.list';
         const COL_LISTITEM = 'app.collectivesocial.group.listitem';
-        const COL_LISTITEM_STATUS = 'app.collectivesocial.group.listitem.status';
+        const COL_LISTITEM_STATUS =
+          'app.collectivesocial.group.listitem.status';
 
-        const listRecords = await opensocial.listAllCommunityRecords(did, COL_LIST);
-        const lists = listRecords
-          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value }))
-          .sort((a: any, b: any) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
+        const listRecords = await opensocial.listAllCommunityRecords(
+          did,
+          COL_LIST
+        );
 
         // Fetch in-progress items across all lists
         const [allItems, allStatuses] = await Promise.all([
           opensocial.listAllCommunityRecords(did, COL_LISTITEM),
           opensocial.listAllCommunityRecords(did, COL_LISTITEM_STATUS),
         ]);
+
+        // Tally items per list so the UI can show "n items" on each list card.
+        const itemCountsByList = new Map<string, number>();
+        for (const item of allItems) {
+          const listUri = (item.value as { listUri?: string }).listUri;
+          if (!listUri) continue;
+          itemCountsByList.set(
+            listUri,
+            (itemCountsByList.get(listUri) ?? 0) + 1
+          );
+        }
+
+        // Sort lists by explicit `order` first (admin-set drag-and-drop
+        // ordering), falling back to creation time descending for lists that
+        // pre-date the `order` field.
+        const lists = listRecords
+          .map((r) => {
+            const value = r.value as Record<string, any>;
+            return {
+              uri: r.uri,
+              rkey: rkeyFromUri(r.uri),
+              ...value,
+              item_count: itemCountsByList.get(r.uri) ?? 0,
+            };
+          })
+          .sort((a: any, b: any) => {
+            const aHasOrder = typeof a.order === 'number';
+            const bHasOrder = typeof b.order === 'number';
+            if (aHasOrder && bHasOrder) return a.order - b.order;
+            if (aHasOrder) return -1;
+            if (bHasOrder) return 1;
+            return (
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+          });
+
         const inProgressItemUris = new Set(
           allStatuses
             .filter((s: any) => s.value.status === 'in-progress')
@@ -130,7 +441,12 @@ export const createRouter = (ctx: AppContext) => {
         );
         const inProgressItems = allItems
           .filter((r) => inProgressItemUris.has(r.uri))
-          .map((r) => ({ uri: r.uri, rkey: rkeyFromUri(r.uri), ...r.value, status: 'in-progress' }));
+          .map((r) => ({
+            uri: r.uri,
+            rkey: rkeyFromUri(r.uri),
+            ...r.value,
+            status: 'in-progress',
+          }));
 
         // Get member count
         let memberCount = 0;
@@ -148,7 +464,10 @@ export const createRouter = (ctx: AppContext) => {
         try {
           permissions = await resolveUserPermissions(did, userDid);
         } catch (permErr: any) {
-          console.warn('Failed to resolve permissions:', permErr.message);
+          ctx.logger.warn(
+            { err: permErr, communityDid: did },
+            'Failed to resolve permissions'
+          );
         }
 
         return res.json({
@@ -161,7 +480,7 @@ export const createRouter = (ctx: AppContext) => {
           in_progress_items: inProgressItems,
         });
       } catch (err: any) {
-        console.error('Error getting community:', err.message);
+        ctx.logger.error({ err, communityDid: did }, 'Error getting community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
@@ -192,13 +511,19 @@ export const createRouter = (ctx: AppContext) => {
         });
         return res.json(data);
       } catch (err: any) {
-        console.error('Error creating community:', err.message);
+        ctx.logger.error({ err }, 'Error creating community');
         return res.status(err.status || 500).json({ error: err.message });
       }
     })
   );
 
-  // POST /groups/:did/join — get join info, then write membership record
+  // POST /groups/:did/join — record a join through OpenSocial and write the
+  // matching membership record into the user's PDS.
+  //
+  // Recovery: if OpenSocial returns 409 AlreadyMember (because a prior attempt
+  // wrote the proof to the community's PDS but failed before writing to the
+  // user's PDS), we still check the user's PDS and create the missing
+  // `community.opensocial.membership` record so the two stores stay in sync.
   router.post(
     '/:did/join',
     handler(async (req: Request, res: Response) => {
@@ -207,30 +532,105 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { did } = req.params;
+      const did = req.params.did as string;
+      const MEMBERSHIP_COLLECTION = 'community.opensocial.membership';
+
+      // Check whether the user already has a local membership record for this
+      // community. Used both as an optimization and as part of the AlreadyMember
+      // recovery flow below.
+      const hasLocalMembershipRecord = async (): Promise<boolean> => {
+        try {
+          let cursor: string | undefined;
+          do {
+            const resp = await agent.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: MEMBERSHIP_COLLECTION,
+              limit: 100,
+              cursor,
+            });
+            const found = resp.data.records.some(
+              (r) => (r.value as { community?: string }).community === did
+            );
+            if (found) return true;
+            cursor = resp.data.cursor;
+          } while (cursor);
+        } catch (err) {
+          console.warn('Failed to list local membership records:', err);
+        }
+        return false;
+      };
+
+      // Write the membership record into the user's PDS.
+      const writeLocalMembership = async (): Promise<void> => {
+        await agent.com.atproto.repo.createRecord({
+          repo: agent.did!,
+          collection: MEMBERSHIP_COLLECTION,
+          record: {
+            $type: MEMBERSHIP_COLLECTION,
+            community: did,
+            joinedAt: new Date().toISOString(),
+          },
+        });
+      };
 
       try {
-        // Ask OpenSocial for the join record template
-        const joinInfo = await opensocial.joinCommunity(
+        const joinResp = await opensocial.joinCommunity(
           did,
           agent.did!,
           // Derive PDS host from the agent's DID doc, fallback to bsky.social
           'bsky.social'
         );
 
-        // Write the membership record into the user's repo
-        await agent.com.atproto.repo.createRecord({
-          repo: agent.did!,
-          collection: joinInfo.collection,
-          record: joinInfo.record,
-        });
+        if (joinResp.status === 'pending') {
+          return res.json({
+            success: true,
+            status: 'pending',
+            message: joinResp.message || 'Join request submitted for approval',
+          });
+        }
+
+        // 'joined' (or any non-pending success) — make sure the user's PDS
+        // has the matching membership record before we report success.
+        if (!(await hasLocalMembershipRecord())) {
+          await writeLocalMembership();
+        }
 
         return res.json({
           success: true,
-          community: joinInfo.community,
-          message: 'Joined community successfully',
+          status: 'joined',
+          message: joinResp.message || 'Joined community successfully',
         });
       } catch (err: any) {
+        // Recovery path: the proof exists in the community PDS but a previous
+        // attempt didn't get the membership record written to the user's PDS.
+        // Treat this as a successful "complete the join" rather than an error.
+        const isAlreadyMember =
+          err?.status === 409 &&
+          (err?.message?.includes('Already a member') ||
+            err?.message?.includes('AlreadyMember'));
+
+        if (isAlreadyMember) {
+          try {
+            if (!(await hasLocalMembershipRecord())) {
+              await writeLocalMembership();
+            }
+            return res.json({
+              success: true,
+              status: 'joined',
+              message: 'Joined community successfully',
+              recovered: true,
+            });
+          } catch (recoveryErr: any) {
+            console.error(
+              'Failed to recover incomplete join:',
+              recoveryErr.message
+            );
+            return res
+              .status(500)
+              .json({ error: 'Failed to complete previous join attempt' });
+          }
+        }
+
         console.error('Error joining community:', err.message);
         return res.status(err.status || 500).json({ error: err.message });
       }
@@ -246,13 +646,16 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       try {
         await opensocial.deleteCommunity(did, agent.did!);
         return res.json({ success: true, message: 'Community deleted' });
       } catch (err: any) {
-        console.error('Error deleting community:', err.message);
+        ctx.logger.error(
+          { err, communityDid: did },
+          'Error deleting community'
+        );
         return res.status(err.status || 500).json({ error: err.message });
       }
     })

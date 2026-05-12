@@ -503,10 +503,246 @@ migrations['001'] = {
 for (let i = 2; i <= 25; i++) {
   const key = String(i).padStart(3, '0');
   migrations[key] = {
-    async up(_db: Kysely<any>) { /* already applied via consolidated 001 */ },
-    async down(_db: Kysely<any>) { /* no-op */ },
+    async up(_db: Kysely<any>) {
+      /* already applied via consolidated 001 */
+    },
+    async down(_db: Kysely<any>) {
+      /* no-op */
+    },
   };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 026: Analytics tables + feed_events eventType column
+// ────────────────────────────────────────────────────────────────────────────
+migrations['026'] = {
+  async up(db: Kysely<unknown>) {
+    // ── User activity log (one row per user per day for retention & WAU)
+    await db.schema
+      .createTable('user_activity_log')
+      .addColumn('did', 'varchar', (col) => col.notNull())
+      .addColumn('activity_date', 'date', (col) => col.notNull())
+      .addColumn('activity_count', 'integer', (col) =>
+        col.notNull().defaultTo(1)
+      )
+      .addUniqueConstraint('user_activity_log_did_date_unique', [
+        'did',
+        'activity_date',
+      ])
+      .execute();
+
+    await db.schema
+      .createIndex('user_activity_log_date_idx')
+      .on('user_activity_log')
+      .column('activity_date')
+      .execute();
+
+    await db.schema
+      .createIndex('user_activity_log_did_idx')
+      .on('user_activity_log')
+      .column('did')
+      .execute();
+
+    // ── Bluesky share events (tracks intent-to-share clicks)
+    await db.schema
+      .createTable('bluesky_share_events')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('userDid', 'varchar', (col) => col.notNull())
+      .addColumn('shareType', 'varchar(50)', (col) => col.notNull())
+      .addColumn('shareTargetId', 'varchar')
+      .addColumn('createdAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    await db.schema
+      .createIndex('bluesky_share_events_created_at_idx')
+      .on('bluesky_share_events')
+      .column('createdAt')
+      .execute();
+
+    await db.schema
+      .createIndex('bluesky_share_events_user_did_idx')
+      .on('bluesky_share_events')
+      .column('userDid')
+      .execute();
+
+    // ── Add eventType column to feed_events for structured querying
+    await db.schema
+      .alterTable('feed_events')
+      .addColumn('eventType', 'varchar(50)')
+      .execute();
+
+    await db.schema
+      .createIndex('feed_events_event_type_idx')
+      .on('feed_events')
+      .column('eventType')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .dropIndex('feed_events_event_type_idx')
+      .ifExists()
+      .execute();
+    await db.schema.alterTable('feed_events').dropColumn('eventType').execute();
+    await db.schema.dropTable('bluesky_share_events').ifExists().execute();
+    await db.schema.dropTable('user_activity_log').ifExists().execute();
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 027: Goals table + goalUri column on share_links
+// ────────────────────────────────────────────────────────────────────────────
+migrations['027'] = {
+  async up(db: Kysely<unknown>) {
+    // ── Goals index table (caches ATProto goal records for aggregation)
+    await db.schema
+      .createTable('goals')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('uri', 'varchar', (col) => col.notNull().unique())
+      .addColumn('authorDid', 'varchar', (col) => col.notNull())
+      .addColumn('title', 'varchar', (col) => col.notNull())
+      .addColumn('mediaType', 'varchar(64)')
+      .addColumn('targetCount', 'integer', (col) => col.notNull())
+      .addColumn('startDate', 'timestamptz', (col) => col.notNull())
+      .addColumn('endDate', 'timestamptz', (col) => col.notNull())
+      .addColumn('visibility', 'varchar(32)', (col) =>
+        col.notNull().defaultTo('public')
+      )
+      .addColumn('cachedCompletedCount', 'integer', (col) =>
+        col.notNull().defaultTo(0)
+      )
+      .addColumn('createdAt', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+      )
+      .execute();
+
+    await db.schema
+      .createIndex('goals_author_did_idx')
+      .on('goals')
+      .column('authorDid')
+      .execute();
+
+    // ── Add goalUri column to share_links for goal sharing
+    await db.schema
+      .alterTable('share_links')
+      .addColumn('goalUri', 'varchar')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('share_links').dropColumn('goalUri').execute();
+    await db.schema.dropTable('goals').ifExists().execute();
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// Migration 028: event_rsvps table for Events V1
+// Events live on the group PDS (community.lexicon.calendar.event).
+// RSVPs live on each user's PDS (community.lexicon.calendar.rsvp).
+// This table caches RSVPs for aggregation (counts, attendee lists).
+// ────────────────────────────────────────────────────────────────────────────
+migrations['028'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('event_rsvps')
+      .addColumn('event_uri', 'text', (col) => col.notNull())
+      .addColumn('event_cid', 'text', (col) => col.notNull())
+      .addColumn('community_did', 'text', (col) => col.notNull())
+      .addColumn('user_did', 'text', (col) => col.notNull())
+      .addColumn('rsvp_uri', 'text', (col) => col.notNull())
+      .addColumn('status', 'varchar(16)', (col) => col.notNull())
+      .addColumn('rsvp_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addColumn('updated_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addPrimaryKeyConstraint('event_rsvps_pkey', ['event_uri', 'user_did'])
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_event_uri_idx')
+      .on('event_rsvps')
+      .column('event_uri')
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_community_did_idx')
+      .on('event_rsvps')
+      .column('community_did')
+      .execute();
+
+    await db.schema
+      .createIndex('event_rsvps_user_did_idx')
+      .on('event_rsvps')
+      .column('user_did')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('event_rsvps').ifExists().execute();
+  },
+};
+
+// Migration 029: widen event_rsvps.status from VARCHAR(16) to TEXT
+// ────────────────────────────────────────────────────────────────────────────
+// Root cause: RSVP status values are full NSID tokens like
+//   "community.lexicon.calendar.rsvp#going"   (38 chars)
+// which overflows the original VARCHAR(16) cap, causing Postgres to throw
+// "value too long for type character varying(16)" on every RSVP write.
+// TEXT has no length cap in Postgres and is the correct type for this column.
+//
+// Down migration note: reverting to VARCHAR(16) will FAIL if any existing row
+// holds a value longer than 16 characters. Treat this as a one-way migration
+// in production unless the table is first truncated.
+migrations['029'] = {
+  async up(db: Kysely<unknown>) {
+    await sql`ALTER TABLE event_rsvps ALTER COLUMN status TYPE TEXT`.execute(
+      db
+    );
+  },
+
+  async down(db: Kysely<unknown>) {
+    // WARNING: this will fail if any row.status is longer than 16 characters.
+    await sql`ALTER TABLE event_rsvps ALTER COLUMN status TYPE VARCHAR(16)`.execute(
+      db
+    );
+  },
+};
+
+// Migration 030: segment_completions cache table
+// Similar pattern to event_rsvps — PDS is source of truth, this caches for fast roster queries.
+// ────────────────────────────────────────────────────────────────────────────
+migrations['030'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .createTable('segment_completions')
+      .addColumn('community_did', 'text', (col) => col.notNull())
+      .addColumn('segment_rkey', 'text', (col) => col.notNull())
+      .addColumn('user_did', 'text', (col) => col.notNull())
+      .addColumn('completed_at', 'timestamptz', (col) =>
+        col.notNull().defaultTo(sql`NOW()`)
+      )
+      .addPrimaryKeyConstraint('segment_completions_pkey', [
+        'community_did',
+        'segment_rkey',
+        'user_did',
+      ])
+      .execute();
+
+    await db.schema
+      .createIndex('segment_completions_segment_idx')
+      .on('segment_completions')
+      .columns(['community_did', 'segment_rkey'])
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema.dropTable('segment_completions').ifExists().execute();
+  },
+};
 
 export { migrations, migrationProvider };
 

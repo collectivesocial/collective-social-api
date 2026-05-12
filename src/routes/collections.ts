@@ -169,7 +169,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -248,7 +248,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -321,7 +321,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const sourceListUri = decodeURIComponent(req.params.listUri);
+        const sourceListUri = decodeURIComponent(req.params.listUri as string);
 
         // Get the source list to clone
         const listsResponse = await agent.api.com.atproto.repo.listRecords({
@@ -434,7 +434,7 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         // Decode URI from route param
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // List all listitem records from the user's repo
         const response = await agent.api.com.atproto.repo.listRecords({
@@ -488,52 +488,69 @@ export const createRouter = (ctx: AppContext) => {
         const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
 
         // Map items with enriched data
-        const items = filteredRecords.map((record: any) => {
-          const useritemData = record.value.mediaItemId
-            ? useritemsByMediaId[record.value.mediaItemId] || {}
-            : {};
+        const itemResults = filteredRecords.map((record: any) => {
+          try {
+            const useritemData = record.value.mediaItemId
+              ? useritemsByMediaId[record.value.mediaItemId] || {}
+              : {};
 
-          const item: any = {
-            uri: record.uri,
-            cid: record.cid,
-            title: record.value.title,
-            creator: record.value.creator || null,
-            order: record.value.order !== undefined ? record.value.order : 0,
-            mediaType: record.value.mediaType || null,
-            mediaItemId: record.value.mediaItemId || null,
-            userItemUri: record.value.userItem || useritemData.uri || null,
-            // Enriched from useritem
-            status: useritemData.status || null,
-            rating: useritemData.rating ?? null,
-            notes: useritemData.notes || null,
-            review: useritemData.review || null,
-            completedAt: useritemData.completedAt || null,
-            recommendations: useritemData.recommendations || [],
-            createdAt: record.value.createdAt,
-          };
+            const item: any = {
+              uri: record.uri,
+              cid: record.cid,
+              title: record.value.title,
+              creator: record.value.creator || null,
+              order: record.value.order !== undefined ? record.value.order : 0,
+              mediaType: record.value.mediaType || null,
+              mediaItemId: record.value.mediaItemId || null,
+              userItemUri: record.value.userItem || useritemData.uri || null,
+              // Enriched from useritem
+              status: useritemData.status || null,
+              rating: useritemData.rating ?? null,
+              notes: useritemData.notes || null,
+              review: useritemData.review || null,
+              completedAt: useritemData.completedAt || null,
+              recommendations: useritemData.recommendations || [],
+              createdAt: record.value.createdAt,
+            };
 
-          // If there's a mediaItemId, enrich with media_items data
-          if (record.value.mediaItemId) {
-            const mediaItem = mediaItemMap.get(record.value.mediaItemId);
-            if (mediaItem) {
-              item.mediaItem = {
-                id: mediaItem.id,
-                isbn: mediaItem.isbn,
-                externalId: mediaItem.externalId,
-                coverImage: mediaItem.coverImage,
-                description: mediaItem.description,
-                publishedYear: mediaItem.publishedYear,
-                length: mediaItem.length,
-                totalReviews: mediaItem.totalReviews,
-                totalSaves: mediaItem.totalSaves,
-                averageRating: mediaItem.averageRating,
-                url: mediaItem.url,
-              };
+            // If there's a mediaItemId, enrich with media_items data
+            if (record.value.mediaItemId) {
+              const mediaItem = mediaItemMap.get(record.value.mediaItemId);
+              if (mediaItem) {
+                item.mediaItem = {
+                  id: mediaItem.id,
+                  isbn: mediaItem.isbn,
+                  externalId: mediaItem.externalId,
+                  coverImage: mediaItem.coverImage,
+                  description: mediaItem.description,
+                  publishedYear: mediaItem.publishedYear,
+                  length: mediaItem.length,
+                  totalReviews: mediaItem.totalReviews,
+                  totalSaves: mediaItem.totalSaves,
+                  averageRating: mediaItem.averageRating,
+                  url: mediaItem.url,
+                };
+              }
             }
-          }
 
-          return item;
+            return item;
+          } catch (err) {
+            ctx.logger.warn(
+              {
+                err,
+                uri: record.uri,
+                mediaItemId: record.value?.mediaItemId,
+              },
+              'Failed to enrich collection item, skipping'
+            );
+            return null;
+          }
         });
+
+        // Filter out any items that failed to load
+        const items = itemResults.filter(
+          (item): item is NonNullable<typeof item> => item !== null
+        );
 
         // Sort by order (descending - higher numbers first)
         items.sort((a, b) => (b.order || 0) - (a.order || 0));
@@ -615,10 +632,11 @@ export const createRouter = (ctx: AppContext) => {
 
         if (existingItem) {
           // Already tracked — optionally upgrade status
-          const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.useritem',
-          });
+          const useritemsResponse =
+            await agent.api.com.atproto.repo.listRecords({
+              repo: agent.did!,
+              collection: 'app.collectivesocial.feed.useritem',
+            });
           const useritem = mediaItemId
             ? useritemsResponse.data.records.find(
                 (r: any) => r.value.mediaItemId === mediaItemId
@@ -721,7 +739,8 @@ export const createRouter = (ctx: AppContext) => {
         const existingInList = itemsResponse.data.records
           .filter((r: any) => r.value.list === defaultListUri)
           .map((r: any) => r.value.order || 0);
-        const maxOrder = existingInList.length > 0 ? Math.max(...existingInList) : 0;
+        const maxOrder =
+          existingInList.length > 0 ? Math.max(...existingInList) : 0;
 
         const now = new Date();
         const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
@@ -785,7 +804,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Check if item already exists in this list
         const existingItemsResponse =
@@ -824,11 +843,10 @@ export const createRouter = (ctx: AppContext) => {
         let userItemUri: string | null = null;
 
         // Check for existing useritem by listing all and matching mediaItemId
-        const useritemsResponse =
-          await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.useritem',
-          });
+        const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
+          repo: agent.did!,
+          collection: 'app.collectivesocial.feed.useritem',
+        });
 
         const existingUseritem = mediaItemId
           ? useritemsResponse.data.records.find(
@@ -1021,6 +1039,7 @@ export const createRouter = (ctx: AppContext) => {
                   .insertInto('feed_events')
                   .values({
                     eventName,
+                    eventType: 'item_status_change',
                     mediaLink: mediaItemId ? `/items/${mediaItemId}` : null,
                     userDid: agent.did!,
                     createdAt: new Date(),
@@ -1038,9 +1057,7 @@ export const createRouter = (ctx: AppContext) => {
           .filter((record: any) => record.value.list === listUri)
           .map((record: any) => record.value.order || 0);
         const maxOrder =
-          existingItemsInList.length > 0
-            ? Math.max(...existingItemsInList)
-            : 0;
+          existingItemsInList.length > 0 ? Math.max(...existingItemsInList) : 0;
         const newOrder = maxOrder + 1;
 
         const now = new Date();
@@ -1095,7 +1112,7 @@ export const createRouter = (ctx: AppContext) => {
       const { order } = req.body;
 
       try {
-        const itemUri = decodeURIComponent(req.params.itemUri);
+        const itemUri = decodeURIComponent(req.params.itemUri as string);
 
         // Extract DID from itemUri to verify ownership
         const itemDidMatch = itemUri.match(/^at:\/\/([^\/]+)/);
@@ -1174,7 +1191,7 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -1237,8 +1254,8 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        const listUri = decodeURIComponent(req.params.listUri);
-        const itemUri = decodeURIComponent(req.params.itemUri);
+        const listUri = decodeURIComponent(req.params.listUri as string);
+        const itemUri = decodeURIComponent(req.params.itemUri as string);
 
         // Extract DID from listUri to verify ownership
         const listDidMatch = listUri.match(/^at:\/\/([^\/]+)/);
@@ -1284,7 +1301,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=60');
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       // Try to get authenticated agent, otherwise create unauthenticated one
       let queryAgent = await getSessionAgent(req, res, ctx);
@@ -1364,7 +1381,7 @@ export const createRouter = (ctx: AppContext) => {
     handler(async (req: Request, res: Response) => {
       res.setHeader('cache-control', 'public, max-age=60');
 
-      const { did } = req.params;
+      const did = req.params.did as string;
 
       // Try to get authenticated agent, otherwise create unauthenticated one
       let queryAgent = await getSessionAgent(req, res, ctx);

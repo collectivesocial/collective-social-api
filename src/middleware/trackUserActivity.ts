@@ -1,9 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
+import { Agent } from '@atproto/api';
 import { getIronSession } from 'iron-session';
+import { sql } from 'kysely';
 import { config } from '../config';
 import type { AppContext } from '../context';
 
 type Session = { did?: string };
+
+const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
 /**
  * Middleware to track user activity
@@ -41,11 +45,12 @@ export function createUserActivityTracker(ctx: AppContext) {
           try {
             const oauthSession = await ctx.oauthClient.restore(session.did);
             if (oauthSession) {
-              const { Agent } = await import('@atproto/api');
               const agent = new Agent(oauthSession);
 
-              // Get user profile
-              const profile = await agent.getProfile({ actor: session.did });
+              // Use public API for profile — avoids OAuth scope issues
+              const profile = await publicAgent.getProfile({
+                actor: session.did,
+              });
               const userHandle = profile.data.handle;
               const displayName = profile.data.displayName || null;
               const avatar = profile.data.avatar || null;
@@ -101,6 +106,7 @@ export function createUserActivityTracker(ctx: AppContext) {
                 .insertInto('feed_events')
                 .values({
                   eventName: `${userHandle} joined Collective!`,
+                  eventType: 'user_joined',
                   mediaLink: null,
                   userDid: session.did,
                   createdAt: now,
@@ -132,24 +138,21 @@ export function createUserActivityTracker(ctx: AppContext) {
 
           if (shouldRefreshProfile) {
             try {
-              const oauthSession = await ctx.oauthClient.restore(session.did);
-              if (oauthSession) {
-                const { Agent } = await import('@atproto/api');
-                const agent = new Agent(oauthSession);
-                const profile = await agent.getProfile({ actor: session.did });
+              const profile = await publicAgent.getProfile({
+                actor: session.did,
+              });
 
-                await ctx.db
-                  .updateTable('users')
-                  .set({
-                    handle: profile.data.handle,
-                    displayName: profile.data.displayName || null,
-                    avatar: profile.data.avatar || null,
-                    lastActivityAt: now,
-                    updatedAt: now,
-                  })
-                  .where('did', '=', session.did)
-                  .execute();
-              }
+              await ctx.db
+                .updateTable('users')
+                .set({
+                  handle: profile.data.handle,
+                  displayName: profile.data.displayName || null,
+                  avatar: profile.data.avatar || null,
+                  lastActivityAt: now,
+                  updatedAt: now,
+                })
+                .where('did', '=', session.did)
+                .execute();
             } catch (err) {
               // If profile refresh fails, just update activity
               await ctx.db
@@ -172,6 +175,18 @@ export function createUserActivityTracker(ctx: AppContext) {
               .where('did', '=', session.did)
               .execute();
           }
+        }
+
+        // Log daily activity for analytics (WAU / retention)
+        try {
+          await sql`
+            INSERT INTO user_activity_log (did, activity_date, activity_count)
+            VALUES (${session.did}, CURRENT_DATE, 1)
+            ON CONFLICT (did, activity_date)
+            DO UPDATE SET activity_count = user_activity_log.activity_count + 1
+          `.execute(ctx.db);
+        } catch (activityErr) {
+          ctx.logger.error({ err: activityErr }, 'Failed to log user activity');
         }
       }
     } catch (err) {
