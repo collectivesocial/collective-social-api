@@ -377,6 +377,21 @@ export const createRouter = (ctx: AppContext) => {
       const { status, rating, notes, review, completedAt } = req.body;
       const useritemUri = decodeURIComponent(req.params.useritemUri as string);
 
+      // The `review` body field is the review *text* in every caller today
+      // (CollectionDetailsPage, GroupItemDetailPage, ItemDetailsPage edit).
+      // The useritem record itself has a `review` field that is supposed to
+      // hold the AT-URI of the corresponding `app.collectivesocial.feed.review`
+      // record, so we must not overwrite that URI with raw text. Treat the
+      // payload as text and keep the existing URI intact below.
+      const reviewText: string | null | undefined =
+        typeof req.body.reviewText === 'string'
+          ? req.body.reviewText
+          : typeof review === 'string'
+            ? review
+            : review === null
+              ? null
+              : undefined;
+
       // Extract rkey from URI
       const rkeyMatch = useritemUri.match(/\/([^\/]+)$/);
       if (!rkeyMatch) {
@@ -417,7 +432,9 @@ export const createRouter = (ctx: AppContext) => {
                 : Number(rating)
               : existingData.rating,
           notes: notes !== undefined ? notes || undefined : existingData.notes,
-          review: review !== undefined ? review : existingData.review,
+          // Preserve the existing review URI — see comment above where
+          // reviewText is parsed. Callers send review *text*, never URIs.
+          review: existingData.review,
           completedAt: newCompletedAt,
           updatedAt: now,
         };
@@ -432,7 +449,6 @@ export const createRouter = (ctx: AppContext) => {
         // Handle review text + rating → Postgres reviews table
         const mediaItemId = existingData.mediaItemId;
         const mediaType = existingData.mediaType;
-        const reviewText = req.body.reviewText;
 
         if (
           reviewText !== undefined &&
