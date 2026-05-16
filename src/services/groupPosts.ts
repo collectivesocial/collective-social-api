@@ -42,7 +42,8 @@ export async function resolvePdsUrl(did: string): Promise<string> {
   const doc = (await res.json()) as any;
 
   const pdsService = doc.service?.find(
-    (s: any) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+    (s: any) =>
+      s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
   );
   if (!pdsService?.serviceEndpoint) {
     throw new Error(`No PDS service endpoint found in DID document for ${did}`);
@@ -160,7 +161,10 @@ export async function fetchGroupPosts(
         // Group posts are public, so no auth is needed. This works
         // regardless of which PDS the requesting user is on.
         const pdsUrl = await resolvePdsUrl(ownerDid);
-        const getRecordUrl = new URL('/xrpc/com.atproto.repo.getRecord', pdsUrl);
+        const getRecordUrl = new URL(
+          '/xrpc/com.atproto.repo.getRecord',
+          pdsUrl
+        );
         getRecordUrl.searchParams.set('repo', ownerDid);
         getRecordUrl.searchParams.set('collection', collection);
         getRecordUrl.searchParams.set('rkey', rkey);
