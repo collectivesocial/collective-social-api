@@ -1,6 +1,7 @@
 import { Agent } from '@atproto/api';
 import { TID } from '@atproto/common';
 import * as opensocial from './opensocial';
+import { config } from '../config';
 
 const COL_GROUP_POST_PERSONAL = 'app.collectivesocial.feed.grouppost';
 const COL_POST_INDEX = 'app.collectivesocial.group.postindex';
@@ -19,6 +20,34 @@ export interface GroupPost {
   createdAt: string;
   replies?: GroupPost[];
   isLegacy?: boolean;
+}
+
+/**
+ * Resolve the PDS endpoint for a DID by fetching its DID document.
+ * Handles did:plc (via PLC directory) and did:web (via .well-known).
+ */
+export async function resolvePdsUrl(did: string): Promise<string> {
+  let docUrl: string;
+  if (did.startsWith('did:web:')) {
+    const host = did.replace('did:web:', '');
+    docUrl = `https://${host}/.well-known/did.json`;
+  } else {
+    docUrl = `${config.plcUrl}/${did}`;
+  }
+
+  const res = await fetch(docUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to resolve DID document for ${did}: ${res.status}`);
+  }
+  const doc = (await res.json()) as any;
+
+  const pdsService = doc.service?.find(
+    (s: any) => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+  );
+  if (!pdsService?.serviceEndpoint) {
+    throw new Error(`No PDS service endpoint found in DID document for ${did}`);
+  }
+  return pdsService.serviceEndpoint;
 }
 
 /**
@@ -116,7 +145,7 @@ export async function fetchGroupPosts(
     return true;
   });
 
-  // 3. Fetch actual posts from user repos in parallel
+  // 3. Fetch actual posts from author PDS endpoints in parallel
   const posts: GroupPost[] = [];
   await Promise.all(
     relevantIndexes.map(async (idx: any) => {
@@ -126,16 +155,27 @@ export async function fetchGroupPosts(
         if (!match) return;
 
         const [, ownerDid, collection, rkey] = match;
-        const postResponse = await agent.api.com.atproto.repo.getRecord({
-          repo: ownerDid,
-          collection: collection,
-          rkey: rkey,
-        });
+
+        // Resolve the author's PDS and fetch the record directly.
+        // Group posts are public, so no auth is needed. This works
+        // regardless of which PDS the requesting user is on.
+        const pdsUrl = await resolvePdsUrl(ownerDid);
+        const getRecordUrl = new URL('/xrpc/com.atproto.repo.getRecord', pdsUrl);
+        getRecordUrl.searchParams.set('repo', ownerDid);
+        getRecordUrl.searchParams.set('collection', collection);
+        getRecordUrl.searchParams.set('rkey', rkey);
+
+        const postRes = await fetch(getRecordUrl.toString());
+        if (!postRes.ok) {
+          console.warn(`PDS returned ${postRes.status} for ${postUri}`);
+          return;
+        }
+        const postData = (await postRes.json()) as any;
 
         posts.push({
           uri: postUri,
           rkey: rkey,
-          ...(postResponse.data.value as any),
+          ...(postData.value as any),
           authorDid: ownerDid,
         });
       } catch (err) {
