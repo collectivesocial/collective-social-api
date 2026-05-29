@@ -742,7 +742,33 @@ export const createRouter = (ctx: AppContext) => {
         );
       }
 
-      return res.json({ progressBySegment });
+      // Count how many members have completed each segment. The per-user
+      // records above only reflect the current user, so the count comes from
+      // the shared segment_completions cache — the same source the roster uses,
+      // keeping the summary badge and the expanded roster in agreement.
+      const completionCountBySegment: Record<string, number> = {};
+      const segmentRkeys = itemSegments.map((seg) => rkeyFromUri(seg.uri));
+      if (segmentRkeys.length > 0) {
+        const counts = await ctx.db
+          .selectFrom('segment_completions')
+          .select(({ fn }) => [
+            'segment_rkey',
+            fn.countAll<number>().as('count'),
+          ])
+          .where('community_did', '=', communityDid)
+          .where('segment_rkey', 'in', segmentRkeys)
+          .groupBy('segment_rkey')
+          .execute();
+        const countByRkey = new Map(
+          counts.map((c) => [c.segment_rkey, Number(c.count)])
+        );
+        for (const seg of itemSegments) {
+          completionCountBySegment[seg.uri] =
+            countByRkey.get(rkeyFromUri(seg.uri)) ?? 0;
+        }
+      }
+
+      return res.json({ progressBySegment, completionCountBySegment });
     })
   );
 
