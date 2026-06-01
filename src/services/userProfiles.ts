@@ -94,7 +94,7 @@ export function buildThreadsWithProfiles(
   posts: any[],
   userProfiles: Record<string, UserProfile>
 ): any[] {
-  const sorted = posts.sort(
+  const sorted = [...posts].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   );
 
