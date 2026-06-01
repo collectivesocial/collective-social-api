@@ -4,6 +4,7 @@ import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import { TID } from '@atproto/common';
 import { AppCollectiveSocialFeedComment } from '../types/lexicon';
+import { enrichWithUserProfiles } from '../services/userProfiles';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -168,45 +169,30 @@ export const createRouter = (ctx: AppContext) => {
       try {
         const comments = await ctx.db
           .selectFrom('comments')
-          .selectAll()
+          .select([
+            'id',
+            'uri',
+            'userDid',
+            'reviewUri',
+            'parentCommentUri',
+            'text',
+            'createdAt',
+            'updatedAt',
+          ])
           .where('reviewUri', '=', reviewUri)
           .orderBy('createdAt', 'asc')
           .execute();
 
-        // Fetch user profile from AT Protocol for each comment
-        const { Agent } = await import('@atproto/api');
-        const commentsWithUsers = await Promise.all(
-          comments.map(async (comment) => {
-            let user = null;
-            try {
-              // Create a public agent (no auth needed for profile lookups)
-              const agent = new Agent({
-                service: 'https://public.api.bsky.app',
-              });
-              const profile = await agent.getProfile({
-                actor: comment.userDid,
-              });
-              user = {
-                did: profile.data.did,
-                handle: profile.data.handle,
-                displayName: profile.data.displayName || null,
-                avatar: profile.data.avatar || null,
-              };
-            } catch (err) {
-              ctx.logger.warn(
-                { err, did: comment.userDid },
-                'Failed to fetch user profile from AT Protocol'
-              );
-            }
+        // Batch fetch all user profiles in one call
+        const dids = [...new Set(comments.map((c) => c.userDid))];
+        const profiles = await enrichWithUserProfiles(dids);
 
-            return {
-              ...comment,
-              createdAt: comment.createdAt.toISOString(),
-              updatedAt: comment.updatedAt.toISOString(),
-              user,
-            };
-          })
-        );
+        const commentsWithUsers = comments.map((comment) => ({
+          ...comment,
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString(),
+          user: profiles[comment.userDid] || null,
+        }));
 
         res.json({ comments: commentsWithUsers });
       } catch (err) {
@@ -227,43 +213,30 @@ export const createRouter = (ctx: AppContext) => {
       try {
         const replies = await ctx.db
           .selectFrom('comments')
-          .selectAll()
+          .select([
+            'id',
+            'uri',
+            'userDid',
+            'reviewUri',
+            'parentCommentUri',
+            'text',
+            'createdAt',
+            'updatedAt',
+          ])
           .where('parentCommentUri', '=', commentUri)
           .orderBy('createdAt', 'asc')
           .execute();
 
-        // Fetch user profile from AT Protocol for each reply
-        const { Agent } = await import('@atproto/api');
-        const repliesWithUsers = await Promise.all(
-          replies.map(async (reply) => {
-            let user = null;
-            try {
-              // Create a public agent (no auth needed for profile lookups)
-              const agent = new Agent({
-                service: 'https://public.api.bsky.app',
-              });
-              const profile = await agent.getProfile({ actor: reply.userDid });
-              user = {
-                did: profile.data.did,
-                handle: profile.data.handle,
-                displayName: profile.data.displayName || null,
-                avatar: profile.data.avatar || null,
-              };
-            } catch (err) {
-              ctx.logger.warn(
-                { err, did: reply.userDid },
-                'Failed to fetch user profile from AT Protocol'
-              );
-            }
+        // Batch fetch all user profiles in one call
+        const dids = [...new Set(replies.map((r) => r.userDid))];
+        const profiles = await enrichWithUserProfiles(dids);
 
-            return {
-              ...reply,
-              createdAt: reply.createdAt.toISOString(),
-              updatedAt: reply.updatedAt.toISOString(),
-              user,
-            };
-          })
-        );
+        const repliesWithUsers = replies.map((reply) => ({
+          ...reply,
+          createdAt: reply.createdAt.toISOString(),
+          updatedAt: reply.updatedAt.toISOString(),
+          user: profiles[reply.userDid] || null,
+        }));
 
         res.json({ replies: repliesWithUsers });
       } catch (err) {
