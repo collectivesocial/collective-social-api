@@ -1792,14 +1792,11 @@ export const createRouter = (ctx: AppContext) => {
           }
         );
 
-        // Enrich with user profiles
+        // Enrich with user profiles and build threads in one pass
         const dids = userProfileService.extractDidsFromPosts(posts);
         const profiles = await userProfileService.enrichWithUserProfiles(dids);
-
-        // Build threads with author profiles
-        const threads = groupPostService.buildThreads(posts);
         const enrichedThreads = userProfileService.buildThreadsWithProfiles(
-          threads,
+          posts,
           profiles
         );
 
@@ -1848,14 +1845,11 @@ export const createRouter = (ctx: AppContext) => {
           }
         );
 
-        // Enrich with user profiles
+        // Enrich with user profiles and build threads in one pass
         const dids = userProfileService.extractDidsFromPosts(posts);
         const profiles = await userProfileService.enrichWithUserProfiles(dids);
-
-        // Build threads with author profiles
-        const threads = groupPostService.buildThreads(posts);
         const enrichedThreads = userProfileService.buildThreadsWithProfiles(
-          threads,
+          posts,
           profiles
         );
 

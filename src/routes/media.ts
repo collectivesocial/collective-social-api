@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { getIronSession } from 'iron-session';
 import { Agent } from '@atproto/api';
+import { sql } from 'kysely';
 import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
@@ -153,8 +154,8 @@ export const createRouter = (ctx: AppContext) => {
                   dbItem = await ctx.db
                     .selectFrom('media_items')
                     .selectAll()
-                    .where('title', '=', result.title)
-                    .where('creator', '=', author)
+                    .where(sql`LOWER(title)`, '=', result.title.toLowerCase())
+                    .where(sql`LOWER(creator)`, '=', author.toLowerCase())
                     .where('mediaType', '=', 'book')
                     .executeTakeFirst();
                 }
@@ -207,7 +208,7 @@ export const createRouter = (ctx: AppContext) => {
                 dbItem = await ctx.db
                   .selectFrom('media_items')
                   .selectAll()
-                  .where('title', '=', result.title)
+                  .where(sql`LOWER(title)`, '=', result.title.toLowerCase())
                   .where('publishedYear', '=', result.year)
                   .where('mediaType', '=', mediaType)
                   .executeTakeFirst();
