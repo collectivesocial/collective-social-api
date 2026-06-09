@@ -237,27 +237,6 @@ export async function fetchGroupPostsWithLegacy(
 }
 
 /**
- * Build threaded post tree
- */
-export function buildThreads(posts: GroupPost[]): GroupPost[] {
-  const sorted = posts.sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-  );
-
-  const topLevel = sorted.filter((p) => !p.parentPostUri);
-  const replies = sorted.filter((p) => p.parentPostUri);
-
-  const buildThread = (post: GroupPost): GroupPost => ({
-    ...post,
-    replies: replies
-      .filter((r) => r.parentPostUri === post.uri)
-      .map(buildThread),
-  });
-
-  return topLevel.map(buildThread);
-}
-
-/**
  * Delete a post (user-initiated).
  * Removes the post from the user's personal repo and cleans up the orphaned
  * postindex pointer in the community repo (A.4).
