@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import crypto from 'crypto';
-import { signRequest, publicKeyToJwk, type SigningConfig } from '../src/lib/httpSigning';
+import {
+  signRequest,
+  publicKeyToJwk,
+  type SigningConfig,
+} from '../src/lib/httpSigning';
 
 // Generate test key pairs for each algorithm
 function generateEd25519Key() {
@@ -9,12 +13,16 @@ function generateEd25519Key() {
 }
 
 function generateEcdsaP256Key() {
-  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const { privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'P-256',
+  });
   return privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
 }
 
 function generateRsaKey() {
-  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const { privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+  });
   return privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
 }
 
@@ -28,11 +36,17 @@ describe('httpSigning', () => {
       };
 
       const result = signRequest(
-        { method: 'GET', url: 'https://example.com/api/v1/communities', headers: {} },
+        {
+          method: 'GET',
+          url: 'https://example.com/api/v1/communities',
+          headers: {},
+        },
         config
       );
 
-      expect(result['Signature-Input']).toMatch(/^sig1=\("@method" "@path"\);created=\d+;keyid="test-key"$/);
+      expect(result['Signature-Input']).toMatch(
+        /^sig1=\("@method" "@path"\);created=\d+;keyid="test-key"$/
+      );
       expect(result['Signature']).toMatch(/^sig1=:[A-Za-z0-9+/]+=*:$/);
       expect(result['Content-Digest']).toBeUndefined();
     });
@@ -46,7 +60,12 @@ describe('httpSigning', () => {
 
       const body = JSON.stringify({ user_did: 'did:plc:test' });
       const result = signRequest(
-        { method: 'POST', url: 'https://example.com/api/v1/communities', headers: {}, body },
+        {
+          method: 'POST',
+          url: 'https://example.com/api/v1/communities',
+          headers: {},
+          body,
+        },
         config
       );
 
@@ -56,7 +75,11 @@ describe('httpSigning', () => {
 
     it('signature is verifiable with the public key (Ed25519)', () => {
       const pem = generateEd25519Key();
-      const config: SigningConfig = { privateKey: pem, keyId: 'test-key', algorithm: 'ed25519' };
+      const config: SigningConfig = {
+        privateKey: pem,
+        keyId: 'test-key',
+        algorithm: 'ed25519',
+      };
 
       const url = 'https://example.com/api/v1/test';
       const result = signRequest({ method: 'GET', url, headers: {} }, config);
@@ -72,13 +95,22 @@ describe('httpSigning', () => {
 
       // Verify with public key
       const publicKey = crypto.createPublicKey(pem);
-      const valid = crypto.verify(null, Buffer.from(signatureBase), publicKey, sigBytes);
+      const valid = crypto.verify(
+        null,
+        Buffer.from(signatureBase),
+        publicKey,
+        sigBytes
+      );
       expect(valid).toBe(true);
     });
 
     it('signature is verifiable with the public key (ECDSA P-256)', () => {
       const pem = generateEcdsaP256Key();
-      const config: SigningConfig = { privateKey: pem, keyId: 'test-key', algorithm: 'ecdsa-p256' };
+      const config: SigningConfig = {
+        privateKey: pem,
+        keyId: 'test-key',
+        algorithm: 'ecdsa-p256',
+      };
 
       const url = 'https://example.com/api/v1/test';
       const result = signRequest({ method: 'GET', url, headers: {} }, config);
@@ -91,17 +123,27 @@ describe('httpSigning', () => {
       const sigBytes = Buffer.from(sigMatch![1], 'base64');
 
       const publicKey = crypto.createPublicKey(pem);
-      const valid = crypto.createVerify('SHA256').update(signatureBase).verify(publicKey, sigBytes);
+      const valid = crypto
+        .createVerify('SHA256')
+        .update(signatureBase)
+        .verify(publicKey, sigBytes);
       expect(valid).toBe(true);
     });
 
     it('signature is verifiable with the public key (RSA-PSS)', () => {
       const pem = generateRsaKey();
-      const config: SigningConfig = { privateKey: pem, keyId: 'test-key', algorithm: 'rsa-pss-sha256' };
+      const config: SigningConfig = {
+        privateKey: pem,
+        keyId: 'test-key',
+        algorithm: 'rsa-pss-sha256',
+      };
 
       const url = 'https://example.com/api/v1/test';
       const body = '{"test":true}';
-      const result = signRequest({ method: 'POST', url, headers: {}, body }, config);
+      const result = signRequest(
+        { method: 'POST', url, headers: {}, body },
+        config
+      );
 
       const sigInput = result['Signature-Input'].replace('sig1=', '');
       const parsedUrl = new URL(url);
@@ -111,10 +153,17 @@ describe('httpSigning', () => {
       const sigBytes = Buffer.from(sigMatch![1], 'base64');
 
       const publicKey = crypto.createPublicKey(pem);
-      const valid = crypto.createVerify('SHA256').update(signatureBase).verify(
-        { key: publicKey, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
-        sigBytes
-      );
+      const valid = crypto
+        .createVerify('SHA256')
+        .update(signatureBase)
+        .verify(
+          {
+            key: publicKey,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+          },
+          sigBytes
+        );
       expect(valid).toBe(true);
     });
 

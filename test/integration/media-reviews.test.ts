@@ -308,13 +308,11 @@ describe('reviews — DB integration', () => {
         updatedAt: new Date(),
       })
       .onConflict((oc) =>
-        oc
-          .columns(['authorDid', 'mediaItemId', 'mediaType'])
-          .doUpdateSet({
-            rating: 5,
-            review: 'Loved it on reflection.',
-            updatedAt: new Date(),
-          })
+        oc.columns(['authorDid', 'mediaItemId', 'mediaType']).doUpdateSet({
+          rating: 5,
+          review: 'Loved it on reflection.',
+          updatedAt: new Date(),
+        })
       )
       .execute();
 

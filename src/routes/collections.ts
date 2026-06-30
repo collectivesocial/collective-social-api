@@ -467,75 +467,85 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Filter items that belong to this list
-        const itemResults = await Promise.all(
-          response.data.records
-            .filter((record: any) => record.value.list === listUri)
-            .map(async (record: any) => {
-              try {
-                const useritemData = record.value.mediaItemId
-                  ? useritemsByMediaId[record.value.mediaItemId] || {}
-                  : {};
-
-                const item: any = {
-                  uri: record.uri,
-                  cid: record.cid,
-                  title: record.value.title,
-                  creator: record.value.creator || null,
-                  order:
-                    record.value.order !== undefined ? record.value.order : 0,
-                  mediaType: record.value.mediaType || null,
-                  mediaItemId: record.value.mediaItemId || null,
-                  userItemUri:
-                    record.value.userItem || useritemData.uri || null,
-                  // Enriched from useritem
-                  status: useritemData.status || null,
-                  rating: useritemData.rating ?? null,
-                  notes: useritemData.notes || null,
-                  review: useritemData.review || null,
-                  completedAt: useritemData.completedAt || null,
-                  recommendations: useritemData.recommendations || [],
-                  createdAt: record.value.createdAt,
-                };
-
-                // If there's a mediaItemId, enrich with media_items data
-                if (record.value.mediaItemId) {
-                  const mediaItem = await ctx.db
-                    .selectFrom('media_items')
-                    .selectAll()
-                    .where('id', '=', record.value.mediaItemId)
-                    .executeTakeFirst();
-
-                  if (mediaItem) {
-                    item.mediaItem = {
-                      id: mediaItem.id,
-                      isbn: mediaItem.isbn,
-                      externalId: mediaItem.externalId,
-                      coverImage: mediaItem.coverImage,
-                      description: mediaItem.description,
-                      publishedYear: mediaItem.publishedYear,
-                      length: mediaItem.length,
-                      totalReviews: mediaItem.totalReviews,
-                      totalSaves: mediaItem.totalSaves,
-                      averageRating: mediaItem.averageRating,
-                      url: mediaItem.url,
-                    };
-                  }
-                }
-
-                return item;
-              } catch (err) {
-                ctx.logger.warn(
-                  {
-                    err,
-                    uri: record.uri,
-                    mediaItemId: record.value?.mediaItemId,
-                  },
-                  'Failed to enrich collection item, skipping'
-                );
-                return null;
-              }
-            })
+        const filteredRecords = response.data.records.filter(
+          (record: any) => record.value.list === listUri
         );
+
+        // Batch fetch all media items to avoid N+1 queries
+        const mediaItemIds = filteredRecords
+          .filter((record: any) => record.value.mediaItemId)
+          .map((record: any) => record.value.mediaItemId);
+
+        const mediaItems =
+          mediaItemIds.length > 0
+            ? await ctx.db
+                .selectFrom('media_items')
+                .selectAll()
+                .where('id', 'in', mediaItemIds)
+                .execute()
+            : [];
+
+        const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
+
+        // Map items with enriched data
+        const itemResults = filteredRecords.map((record: any) => {
+          try {
+            const useritemData = record.value.mediaItemId
+              ? useritemsByMediaId[record.value.mediaItemId] || {}
+              : {};
+
+            const item: any = {
+              uri: record.uri,
+              cid: record.cid,
+              title: record.value.title,
+              creator: record.value.creator || null,
+              order: record.value.order !== undefined ? record.value.order : 0,
+              mediaType: record.value.mediaType || null,
+              mediaItemId: record.value.mediaItemId || null,
+              userItemUri: record.value.userItem || useritemData.uri || null,
+              // Enriched from useritem
+              status: useritemData.status || null,
+              rating: useritemData.rating ?? null,
+              notes: useritemData.notes || null,
+              review: useritemData.review || null,
+              completedAt: useritemData.completedAt || null,
+              recommendations: useritemData.recommendations || [],
+              createdAt: record.value.createdAt,
+            };
+
+            // If there's a mediaItemId, enrich with media_items data
+            if (record.value.mediaItemId) {
+              const mediaItem = mediaItemMap.get(record.value.mediaItemId);
+              if (mediaItem) {
+                item.mediaItem = {
+                  id: mediaItem.id,
+                  isbn: mediaItem.isbn,
+                  externalId: mediaItem.externalId,
+                  coverImage: mediaItem.coverImage,
+                  description: mediaItem.description,
+                  publishedYear: mediaItem.publishedYear,
+                  length: mediaItem.length,
+                  totalReviews: mediaItem.totalReviews,
+                  totalSaves: mediaItem.totalSaves,
+                  averageRating: mediaItem.averageRating,
+                  url: mediaItem.url,
+                };
+              }
+            }
+
+            return item;
+          } catch (err) {
+            ctx.logger.warn(
+              {
+                err,
+                uri: record.uri,
+                mediaItemId: record.value?.mediaItemId,
+              },
+              'Failed to enrich collection item, skipping'
+            );
+            return null;
+          }
+        });
 
         // Filter out any items that failed to load
         const items = itemResults.filter(

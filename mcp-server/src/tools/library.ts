@@ -122,7 +122,16 @@ export function registerLibraryTools(
       url: z.string().optional().describe('URL for articles or videos'),
       notes: z.string().optional().describe('Private notes about this item'),
     },
-    async ({ title, creator, mediaType, mediaItemId, status, isbn, url, notes }) => {
+    async ({
+      title,
+      creator,
+      mediaType,
+      mediaItemId,
+      status,
+      isbn,
+      url,
+      notes,
+    }) => {
       // Step 1: Ensure media item exists in Collective's database
       let itemId = mediaItemId;
 

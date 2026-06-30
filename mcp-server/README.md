@@ -43,33 +43,33 @@ npm start
 
 ## Configuration
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `COLLECTIVE_API_URL` | Yes | Base URL of the Collective API (e.g., `https://api.collectivesocial.app`) |
-| `COLLECTIVE_API_TOKEN` | Yes | Bearer token for authenticating with the Collective API |
-| `MCP_PORT` | No | Port to listen on (default: 3100) |
-| `MCP_AUTH_TOKEN` | Prod | Token that MCP clients must provide to authenticate |
-| `MCP_ALLOWED_ORIGINS` | No | CORS allowed origins (default: `*`) |
+| Variable               | Required | Description                                                               |
+| ---------------------- | -------- | ------------------------------------------------------------------------- |
+| `COLLECTIVE_API_URL`   | Yes      | Base URL of the Collective API (e.g., `https://api.collectivesocial.app`) |
+| `COLLECTIVE_API_TOKEN` | Yes      | Bearer token for authenticating with the Collective API                   |
+| `MCP_PORT`             | No       | Port to listen on (default: 3100)                                         |
+| `MCP_AUTH_TOKEN`       | Prod     | Token that MCP clients must provide to authenticate                       |
+| `MCP_ALLOWED_ORIGINS`  | No       | CORS allowed origins (default: `*`)                                       |
 
 ## Available Tools
 
 ### Library Management
 
-| Tool | Description |
-|------|-------------|
-| `search_media` | Search by title, creator, keyword. Filter by media type. |
-| `add_to_library` | Add an item to your library (creates media record if needed) |
+| Tool                 | Description                                                      |
+| -------------------- | ---------------------------------------------------------------- |
+| `search_media`       | Search by title, creator, keyword. Filter by media type.         |
+| `add_to_library`     | Add an item to your library (creates media record if needed)     |
 | `update_item_status` | Change status to want/in-progress/completed, add rating or notes |
-| `list_library` | List your library items, filterable by status and type |
+| `list_library`       | List your library items, filterable by status and type           |
 
 ### Book Club / Segments
 
-| Tool | Description |
-|------|-------------|
-| `list_group_memberships` | See your book clubs and groups |
-| `list_upcoming_segments` | Upcoming reading assignments with due dates |
-| `get_segment_progress` | Check if a segment is completed |
-| `complete_segment` | Mark a segment as done (updates group roster + personal progress) |
+| Tool                     | Description                                                       |
+| ------------------------ | ----------------------------------------------------------------- |
+| `list_group_memberships` | See your book clubs and groups                                    |
+| `list_upcoming_segments` | Upcoming reading assignments with due dates                       |
+| `get_segment_progress`   | Check if a segment is completed                                   |
+| `complete_segment`       | Mark a segment as done (updates group roster + personal progress) |
 
 ## Authentication
 

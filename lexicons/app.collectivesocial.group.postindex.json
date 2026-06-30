@@ -8,11 +8,7 @@
       "key": "tid",
       "record": {
         "type": "object",
-        "required": [
-          "post",
-          "authorDid",
-          "createdAt"
-        ],
+        "required": ["post", "authorDid", "createdAt"],
         "properties": {
           "post": {
             "type": "ref",

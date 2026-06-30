@@ -48,7 +48,10 @@ describe('config', () => {
     delete process.env.DATABASE_URL;
 
     // Mock dotenv so .env file doesn't re-inject DATABASE_URL
-    vi.doMock('dotenv', () => ({ default: { config: () => {} }, config: () => {} }));
+    vi.doMock('dotenv', () => ({
+      default: { config: () => {} },
+      config: () => {},
+    }));
 
     await expect(async () => {
       const configModule = await import('../src/config');
@@ -72,7 +75,9 @@ describe('config', () => {
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
 
     const configModule = await import('../src/config');
-    expect(configModule.config.clientUrl).toBe('https://app.collectivesocial.app');
+    expect(configModule.config.clientUrl).toBe(
+      'https://app.collectivesocial.app'
+    );
   });
 
   it('should add corsOrigin from CORS_ORIGIN env var', async () => {
@@ -81,7 +86,9 @@ describe('config', () => {
     process.env.COOKIE_SECRET = 'test-secret-at-least-32-chars-long!!';
 
     const configModule = await import('../src/config');
-    expect(configModule.config.corsOrigin).toBe('https://app.collectivesocial.app');
+    expect(configModule.config.corsOrigin).toBe(
+      'https://app.collectivesocial.app'
+    );
   });
 
   it('should set corsOrigin to undefined when CORS_ORIGIN is not set', async () => {

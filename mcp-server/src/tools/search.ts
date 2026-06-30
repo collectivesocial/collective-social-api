@@ -8,7 +8,7 @@ export function registerSearchTools(
 ): void {
   server.tool(
     'search_media',
-    'Search Collective\'s media database by title, creator, or keyword. Returns books, articles, movies, TV shows, podcasts, games, music, and videos.',
+    "Search Collective's media database by title, creator, or keyword. Returns books, articles, movies, TV shows, podcasts, games, music, and videos.",
     {
       query: z.string().describe('Search query — title, author, or keyword'),
       mediaType: z

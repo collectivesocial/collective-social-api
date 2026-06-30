@@ -33,8 +33,14 @@ const ADMIN_DID = 'did:plc:admin';
 
 /** Helper: set up a fetch mock returning the given permissions response. */
 function setupPermissionsMock(
-  permissions: Array<{ collection: string; canCreate: string; canRead: string; canUpdate: string; canDelete: string }>,
-  userRoles: string[],
+  permissions: Array<{
+    collection: string;
+    canCreate: string;
+    canRead: string;
+    canUpdate: string;
+    canDelete: string;
+  }>,
+  userRoles: string[]
 ) {
   const body = JSON.stringify({ permissions, userRoles });
   mockFetch.mockResolvedValue({
@@ -61,10 +67,22 @@ describe('resolveUserPermissions', () => {
     // leaving group.post absent from the result entirely.
     setupPermissionsMock(
       [
-        { collection: 'app.collectivesocial.group.list', canCreate: 'admin', canRead: 'member', canUpdate: 'admin', canDelete: 'admin' },
-        { collection: 'app.collectivesocial.group.listitem', canCreate: 'admin', canRead: 'member', canUpdate: 'admin', canDelete: 'admin' },
+        {
+          collection: 'app.collectivesocial.group.list',
+          canCreate: 'admin',
+          canRead: 'member',
+          canUpdate: 'admin',
+          canDelete: 'admin',
+        },
+        {
+          collection: 'app.collectivesocial.group.listitem',
+          canCreate: 'admin',
+          canRead: 'member',
+          canUpdate: 'admin',
+          canDelete: 'admin',
+        },
       ],
-      ['member'],
+      ['member']
     );
 
     const result = await resolveUserPermissions(uniqueDid(), MEMBER_DID);
@@ -76,8 +94,16 @@ describe('resolveUserPermissions', () => {
 
   it('gives an admin canCreate=true for group.post even when DB rows omit it', async () => {
     setupPermissionsMock(
-      [{ collection: 'app.collectivesocial.group.list', canCreate: 'admin', canRead: 'member', canUpdate: 'admin', canDelete: 'admin' }],
-      ['admin'],
+      [
+        {
+          collection: 'app.collectivesocial.group.list',
+          canCreate: 'admin',
+          canRead: 'member',
+          canUpdate: 'admin',
+          canDelete: 'admin',
+        },
+      ],
+      ['admin']
     );
 
     const result = await resolveUserPermissions(uniqueDid(), ADMIN_DID);
@@ -88,8 +114,16 @@ describe('resolveUserPermissions', () => {
   it('DB rows override DEFAULTS when the same collection appears in both', async () => {
     // Community has overridden group.post to require admin to create (not the DEFAULTS member)
     setupPermissionsMock(
-      [{ collection: 'app.collectivesocial.group.post', canCreate: 'admin', canRead: 'member', canUpdate: 'admin', canDelete: 'admin' }],
-      ['member'],
+      [
+        {
+          collection: 'app.collectivesocial.group.post',
+          canCreate: 'admin',
+          canRead: 'member',
+          canUpdate: 'admin',
+          canDelete: 'admin',
+        },
+      ],
+      ['member']
     );
 
     const result = await resolveUserPermissions(uniqueDid(), MEMBER_DID);
@@ -127,8 +161,16 @@ describe('resolveUserPermissions', () => {
 
   it('includes all DEFAULTS collections even when DB has unrelated rows', async () => {
     setupPermissionsMock(
-      [{ collection: 'community.lexicon.calendar.event', canCreate: 'admin', canRead: 'member', canUpdate: 'admin', canDelete: 'admin' }],
-      ['member'],
+      [
+        {
+          collection: 'community.lexicon.calendar.event',
+          canCreate: 'admin',
+          canRead: 'member',
+          canUpdate: 'admin',
+          canDelete: 'admin',
+        },
+      ],
+      ['member']
     );
 
     const result = await resolveUserPermissions(uniqueDid(), MEMBER_DID);
@@ -149,4 +191,3 @@ describe('resolveUserPermissions', () => {
     }
   });
 });
-

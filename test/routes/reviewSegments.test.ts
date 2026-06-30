@@ -101,7 +101,11 @@ describe('POST /groups/:communityDid/segments/:segmentRkey/progress', () => {
         cid: 'bafynewcid',
       },
     });
-    const mockGetRecord = vi.fn().mockRejectedValue(Object.assign(new Error('not found'), { status: 404 }));
+    const mockGetRecord = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('not found'), { status: 404 })
+      );
 
     mockGetSessionAgent.mockResolvedValue({
       did: USER_DID,
@@ -122,7 +126,9 @@ describe('POST /groups/:communityDid/segments/:segmentRkey/progress', () => {
     const app = buildApp();
 
     const res = await request(app)
-      .post(`/groups/${encodeURIComponent(COMMUNITY_DID)}/segments/${SEGMENT_RKEY}/progress`)
+      .post(
+        `/groups/${encodeURIComponent(COMMUNITY_DID)}/segments/${SEGMENT_RKEY}/progress`
+      )
       .set('Cookie', 'session=fake');
 
     expect(res.status).toBe(200);
@@ -131,7 +137,9 @@ describe('POST /groups/:communityDid/segments/:segmentRkey/progress', () => {
     // Assert: putRecord was called with createdAt in the record
     expect(mockPutRecord).toHaveBeenCalledTimes(1);
     const callArgs = mockPutRecord.mock.calls[0][0];
-    expect(callArgs.collection).toBe('app.collectivesocial.feed.segmentprogress');
+    expect(callArgs.collection).toBe(
+      'app.collectivesocial.feed.segmentprogress'
+    );
     expect(callArgs.rkey).toBe(SEGMENT_RKEY);
     expect(callArgs.record).toHaveProperty('createdAt');
     expect(typeof callArgs.record.createdAt).toBe('string');
@@ -147,7 +155,9 @@ describe('POST /groups/:communityDid/segments/:segmentRkey/progress', () => {
     const app = buildApp();
 
     const res = await request(app)
-      .post(`/groups/${encodeURIComponent(COMMUNITY_DID)}/segments/${SEGMENT_RKEY}/progress`)
+      .post(
+        `/groups/${encodeURIComponent(COMMUNITY_DID)}/segments/${SEGMENT_RKEY}/progress`
+      )
       .set('Cookie', 'session=fake');
 
     expect(res.status).toBe(403);

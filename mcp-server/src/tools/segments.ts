@@ -8,7 +8,7 @@ export function registerSegmentTools(
 ): void {
   server.tool(
     'list_group_memberships',
-    "List the book clubs and groups the user is a member of on Collective.",
+    'List the book clubs and groups the user is a member of on Collective.',
     {},
     async () => {
       const groups = await client.listGroups();
@@ -25,7 +25,10 @@ export function registerSegmentTools(
       }
 
       const formatted = groups
-        .map((g) => `- **${g.name}**${g.description ? `: ${g.description}` : ''} (DID: ${g.communityDid})`)
+        .map(
+          (g) =>
+            `- **${g.name}**${g.description ? `: ${g.description}` : ''} (DID: ${g.communityDid})`
+        )
         .join('\n');
 
       return {
@@ -114,7 +117,9 @@ export function registerSegmentTools(
               month: 'short',
               day: 'numeric',
             });
-            parts.push(isOverdue ? `⚠️ Due: ${dateStr} (overdue)` : `📅 Due: ${dateStr}`);
+            parts.push(
+              isOverdue ? `⚠️ Due: ${dateStr} (overdue)` : `📅 Due: ${dateStr}`
+            );
           }
           if (seg.startPage && seg.endPage) {
             parts.push(`(pages ${seg.startPage}–${seg.endPage})`);
@@ -190,7 +195,9 @@ export function registerSegmentTools(
     'Mark a reading/watching segment as completed. This updates both the group roster (so others can see your progress) and your personal library progress.',
     {
       communityDid: z.string().describe('The DID of the group/book club'),
-      segmentRkey: z.string().describe('The record key of the segment to complete'),
+      segmentRkey: z
+        .string()
+        .describe('The record key of the segment to complete'),
     },
     async ({ communityDid, segmentRkey }) => {
       const result = await client.completeSegment(communityDid, segmentRkey);

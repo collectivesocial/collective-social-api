@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Response, NextFunction } from 'express';
-import { requireGroupMember, requireGroupAdmin, type GroupAuthRequest } from '../src/middleware/groupAuth';
+import {
+  requireGroupMember,
+  requireGroupAdmin,
+  type GroupAuthRequest,
+} from '../src/middleware/groupAuth';
 
 // Mock the entire opensocial service so no real HTTP calls are made.
 vi.mock('../src/services/opensocial', () => ({
@@ -39,12 +43,18 @@ beforeEach(() => {
 describe('requireGroupMember', () => {
   it('returns 401 when there is no active session', async () => {
     mockGetSessionAgent.mockResolvedValue(null as any);
-    const { req, res, next, status, json } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next, status, json } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupMember(ctx)(req, res, next);
 
     expect(status).toHaveBeenCalledWith(401);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining('authenticated') }));
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining('authenticated'),
+      })
+    );
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -55,14 +65,20 @@ describe('requireGroupMember', () => {
     await requireGroupMember(ctx)(req, res, next);
 
     expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining('communityDid') }));
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringContaining('communityDid'),
+      })
+    );
     expect(next).not.toHaveBeenCalled();
   });
 
   it('returns 403 when checkMembership returns isMember: false', async () => {
     mockGetSessionAgent.mockResolvedValue({ did: 'did:plc:user1' } as any);
     mockCheckMembership.mockResolvedValue({ isMember: false, isAdmin: false });
-    const { req, res, next, status } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next, status } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupMember(ctx)(req, res, next);
 
@@ -73,7 +89,9 @@ describe('requireGroupMember', () => {
   it('calls next() and attaches groupAuth when user is a member', async () => {
     mockGetSessionAgent.mockResolvedValue({ did: 'did:plc:user1' } as any);
     mockCheckMembership.mockResolvedValue({ isMember: true, isAdmin: false });
-    const { req, res, next } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupMember(ctx)(req, res, next);
 
@@ -89,7 +107,9 @@ describe('requireGroupMember', () => {
   it('calls next() and marks isAdmin when user is an admin', async () => {
     mockGetSessionAgent.mockResolvedValue({ did: 'did:plc:admin1' } as any);
     mockCheckMembership.mockResolvedValue({ isMember: true, isAdmin: true });
-    const { req, res, next } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupMember(ctx)(req, res, next);
 
@@ -102,7 +122,9 @@ describe('requireGroupMember', () => {
 
 describe('requireGroupAdmin', () => {
   it('returns 403 when groupAuth is already set but isAdmin is false', async () => {
-    const { req, res, next, status } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next, status } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
     // Pre-populate groupAuth as requireGroupMember would
     req.groupAuth = {
       userDid: 'did:plc:user1',
@@ -120,7 +142,9 @@ describe('requireGroupAdmin', () => {
   });
 
   it('calls next() when groupAuth is already set and isAdmin is true', async () => {
-    const { req, res, next } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
     req.groupAuth = {
       userDid: 'did:plc:admin1',
       communityDid: 'did:plc:community1',
@@ -137,11 +161,16 @@ describe('requireGroupAdmin', () => {
   it('performs full membership check when groupAuth is not pre-set', async () => {
     mockGetSessionAgent.mockResolvedValue({ did: 'did:plc:admin1' } as any);
     mockCheckMembership.mockResolvedValue({ isMember: true, isAdmin: true });
-    const { req, res, next } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupAdmin(ctx)(req, res, next);
 
-    expect(mockCheckMembership).toHaveBeenCalledWith('did:plc:community1', 'did:plc:admin1');
+    expect(mockCheckMembership).toHaveBeenCalledWith(
+      'did:plc:community1',
+      'did:plc:admin1'
+    );
     expect(next).toHaveBeenCalledTimes(1);
     expect(req.groupAuth?.isAdmin).toBe(true);
   });
@@ -149,7 +178,9 @@ describe('requireGroupAdmin', () => {
   it('returns 403 when full check finds user is a member but not admin', async () => {
     mockGetSessionAgent.mockResolvedValue({ did: 'did:plc:user1' } as any);
     mockCheckMembership.mockResolvedValue({ isMember: true, isAdmin: false });
-    const { req, res, next, status } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next, status } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupAdmin(ctx)(req, res, next);
 
@@ -159,7 +190,9 @@ describe('requireGroupAdmin', () => {
 
   it('returns 401 when no session even in standalone admin check', async () => {
     mockGetSessionAgent.mockResolvedValue(null as any);
-    const { req, res, next, status } = makeReqRes({ communityDid: 'did:plc:community1' });
+    const { req, res, next, status } = makeReqRes({
+      communityDid: 'did:plc:community1',
+    });
 
     await requireGroupAdmin(ctx)(req, res, next);
 

@@ -7,7 +7,12 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { createTestDb, createFakeContext, createTestApp, supertest } from './helpers';
+import {
+  createTestDb,
+  createFakeContext,
+  createTestApp,
+  supertest,
+} from './helpers';
 import type { Database } from '../../src/db';
 
 // ── Mock the OpenSocial service module ────────────────────────────────────────
@@ -27,14 +32,26 @@ import * as opensocial from '../../src/services/opensocial';
 
 const COMMUNITY_DID = 'did:plc:testcommunity123';
 
-const MOCK_PERMISSIONS: Record<string, {
-  canCreate: boolean; canRead: boolean; canUpdate: boolean; canDelete: boolean;
-}> = {
+const MOCK_PERMISSIONS: Record<
+  string,
+  {
+    canCreate: boolean;
+    canRead: boolean;
+    canUpdate: boolean;
+    canDelete: boolean;
+  }
+> = {
   'app.collectivesocial.group.list': {
-    canCreate: false, canRead: true, canUpdate: false, canDelete: false,
+    canCreate: false,
+    canRead: true,
+    canUpdate: false,
+    canDelete: false,
   },
   'app.collectivesocial.group.listitem': {
-    canCreate: false, canRead: true, canUpdate: false, canDelete: false,
+    canCreate: false,
+    canRead: true,
+    canUpdate: false,
+    canDelete: false,
   },
 };
 
@@ -47,7 +64,9 @@ describe('GET /groups/:communityDid/permissions', () => {
     const ctx = createFakeContext(db);
     app = createTestApp(ctx);
 
-    vi.mocked(opensocial.resolveUserPermissions).mockResolvedValue(MOCK_PERMISSIONS);
+    vi.mocked(opensocial.resolveUserPermissions).mockResolvedValue(
+      MOCK_PERMISSIONS
+    );
   });
 
   afterAll(async () => {
