@@ -334,3 +334,19 @@ Currently no automated tests. Manual testing via:
 - Set admin via script: `npm run make-admin`
 - Admin routes in `routes/admin.ts`
 - Check admin status: Query `users` table by `did`
+
+---
+
+## AI Priming Rules (Hard Constraints)
+
+These rules MUST be followed in all generated code:
+
+1. **Kysely `sql` template only**: Never use `ctx.db.raw()` (does not exist)
+2. **Columns are camelCase**: Both in TypeScript interfaces AND PostgreSQL. No snake_case mapping.
+3. **DID from session only**: Always `agent.did!` from `ctx.oauthClient.restore()`, never from request body
+4. **Batch AT Protocol calls**: Use `getProfiles` (25/call), never per-row `getProfile`
+5. **Explicit column selects**: Avoid `.selectAll()` in list endpoints
+6. **Non-mutating transforms**: `[...arr].sort()`, never `arr.sort()` on input parameters
+7. **Never edit existing migrations**: Add a new numbered migration string instead
+8. **Tests required**: New routes/services need tests in `test/` using Vitest
+9. **Express 5**: Async errors auto-propagate; explicit `next(err)` is unnecessary
