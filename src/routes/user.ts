@@ -4,6 +4,7 @@ import { getUserByHandle } from '../models/user';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
+import { listRecordsMerged } from '../lexicon/readMerge';
 
 const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
@@ -28,12 +29,12 @@ export const createRouter = (ctx: AppContext) => {
         // Get collection count (needs auth to read user's repo)
         let collectionCount = 0;
         try {
-          const collectionsResponse =
-            await agent.api.com.atproto.repo.listRecords({
-              repo: agent.did!,
-              collection: 'app.collectivesocial.feed.list',
-            });
-          collectionCount = collectionsResponse.data.records.length;
+          const { records } = await listRecordsMerged(
+            agent,
+            agent.did!,
+            'list'
+          );
+          collectionCount = records.length;
         } catch (err) {
           ctx.logger.warn({ err }, 'Failed to fetch collection count');
         }
@@ -85,12 +86,12 @@ export const createRouter = (ctx: AppContext) => {
       // Get collection count (needs auth to read user's repo)
       let collectionCount = 0;
       try {
-        const collectionsResponse =
-          await agent.api.com.atproto.repo.listRecords({
-            repo: profile.data.did,
-            collection: 'app.collectivesocial.feed.list',
-          });
-        collectionCount = collectionsResponse.data.records.length;
+        const { records } = await listRecordsMerged(
+          agent,
+          profile.data.did,
+          'list'
+        );
+        collectionCount = records.length;
       } catch (err) {
         ctx.logger.warn({ err }, 'Failed to fetch collection count');
       }

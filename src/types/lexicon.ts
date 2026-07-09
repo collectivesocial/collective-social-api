@@ -158,6 +158,164 @@ export namespace AppCollectiveSocialFeedComment {
   }
 }
 
+export namespace SocialPopfeedFeedList {
+  export interface Identifiers {
+    isbn10?: string;
+    isbn13?: string;
+    imdbId?: string;
+    tmdbId?: string;
+  }
+
+  export interface Record {
+    $type?: 'social.popfeed.feed.list';
+    name: string;
+    description?: string;
+    tags?: string[];
+    ordered?: boolean;
+    listType?: string;
+    // Collective Social extension fields (additive, not part of the base popfeed schema).
+    visibility?: 'public' | 'private';
+    isDefault?: boolean;
+    parentListUri?: string;
+    avatar?: {
+      cid: string;
+      mimeType: string;
+    };
+    createdAt: string;
+  }
+}
+
+export namespace SocialPopfeedFeedListitem {
+  export interface Identifiers {
+    isbn10?: string;
+    isbn13?: string;
+    imdbId?: string;
+    tmdbId?: string;
+  }
+
+  export interface BookProgress {
+    status: 'want' | 'in_progress' | 'completed';
+    percent?: number;
+    updatedAt?: string;
+    totalPages?: number;
+    currentPage?: number;
+  }
+
+  export interface Record {
+    $type?: 'social.popfeed.feed.listitem';
+    listUri: string; // AT-URI of the list
+    title: string;
+    mainCredit?: string;
+    mainCreditRole?: string;
+    creativeWorkType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
+    genres?: string[];
+    listType?: string;
+    posterUrl?: string;
+    backdropUrl?: string;
+    identifiers?: Identifiers;
+    releaseDate?: string;
+    bookProgress?: BookProgress;
+    // Collective Social extension fields (additive, not part of the base popfeed schema).
+    mediaItemId?: number; // Reference to media_items table
+    order?: number;
+    userItem?: string; // AT-URI of associated useritem record
+    addedAt: string;
+  }
+}
+
+export namespace SocialPopfeedFeedReview {
+  export interface Identifiers {
+    isbn10?: string;
+    isbn13?: string;
+    imdbId?: string;
+    tmdbId?: string;
+  }
+
+  export interface Record {
+    $type?: 'social.popfeed.feed.review';
+    title?: string;
+    text?: string;
+    facets?: unknown[];
+    tags?: string[];
+    rating?: number; // 0-10
+    genres?: string[];
+    isRevisit?: boolean;
+    containsSpoilers?: boolean;
+    mainCredit?: string;
+    mainCreditRole?: string;
+    creativeWorkType?:
+      | 'book'
+      | 'movie'
+      | 'tv'
+      | 'podcast'
+      | 'article'
+      | 'game'
+      | 'music'
+      | 'course'
+      | 'video';
+    posterUrl?: string;
+    backdropUrl?: string;
+    identifiers?: Identifiers;
+    releaseDate?: string;
+    // Collective Social extension fields (additive, not part of the base popfeed schema).
+    notes?: string;
+    listItem?: string; // AT-URI of the associated list item
+    mediaItemId?: number; // Reference to media_items table
+    createdAt: string;
+    updatedAt?: string;
+  }
+}
+
+export namespace SocialPopfeedFeedComment {
+  export interface Record {
+    $type?: 'social.popfeed.feed.comment';
+    text: string;
+    reviewRef?: {
+      uri: string;
+      cid: string;
+    };
+    parentCommentRef?: {
+      uri: string;
+      cid: string;
+    };
+    createdAt: string;
+    updatedAt?: string;
+  }
+}
+
+export namespace SocialPopfeedFeedReaction {
+  export interface Record {
+    $type?: 'social.popfeed.feed.reaction';
+    emoji:
+      | 'joy'
+      | 'heart'
+      | 'grin'
+      | 'sob'
+      | 'scream'
+      | 'upside_down'
+      | 'smirk';
+    subject:
+      | ({ $type?: 'social.popfeed.feed.reaction#reviewRef' } & {
+          uri: string;
+          cid: string;
+        })
+      | ({ $type?: 'social.popfeed.feed.reaction#commentRef' } & {
+          uri: string;
+          cid: string;
+        });
+    createdAt: string;
+  }
+}
+
 export namespace AppCollectiveSocialFeedGoal {
   export interface Record {
     $type?: 'app.collectivesocial.feed.goal';

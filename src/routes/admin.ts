@@ -3,6 +3,7 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { fetchUserHandles } from '../lib/users';
 import { getSessionAgent } from '../auth/agent';
+import { listRecordsMerged } from '../lexicon/readMerge';
 
 // Middleware to check if user is admin
 async function requireAdmin(
@@ -306,17 +307,15 @@ export const createRouter = (ctx: AppContext) => {
           for (const [userDid, userLinks] of Object.entries(linksByUser)) {
             try {
               // Use the admin's agent to query other users' public collection data
-              const listsResponse =
-                await adminAgentForCollections.api.com.atproto.repo.listRecords(
-                  {
-                    repo: userDid,
-                    collection: 'app.collectivesocial.feed.list',
-                  }
-                );
+              const { records: listRecords } = await listRecordsMerged(
+                adminAgentForCollections,
+                userDid,
+                'list'
+              );
 
               for (const link of userLinks) {
-                const collection = listsResponse.data.records.find(
-                  (record: any) => record.uri === link.collectionUri
+                const collection = listRecords.find(
+                  (record) => record.uri === link.collectionUri
                 );
                 if (collection && collection.value?.name) {
                   collectionNames[link.collectionUri!] =

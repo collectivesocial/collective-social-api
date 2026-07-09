@@ -5,9 +5,11 @@ import { handler } from '../lib/http';
 import {
   AppCollectiveSocialFeedUseritem,
   AppCollectiveSocialFeedReview,
+  SocialPopfeedFeedReview,
 } from '../types/lexicon';
 import { getSessionAgent } from '../auth/agent';
 import { sql } from 'kysely';
+import { NEW_NSID, collectionFromUri } from '../lexicon/collections';
 
 // Helper function to get the rating column name for a given rating value
 const getRatingColumnName = (rating: number): string => {
@@ -485,34 +487,69 @@ export const createRouter = (ctx: AppContext) => {
             // Create/update AT Protocol review record
             let reviewUri: string | null = updatedRecord.review || null;
             try {
-              const reviewRecord: AppCollectiveSocialFeedReview.Record = {
-                $type: 'app.collectivesocial.feed.review',
-                text: reviewText.trim(),
-                rating: Number(rating),
-                notes: notes || undefined,
-                mediaItemId,
-                mediaType: mediaType as any,
-                createdAt: reviewNow.toISOString(),
-                updatedAt: reviewNow.toISOString(),
-              };
-
               if (reviewUri) {
-                // Update existing review
+                // Update existing review, writing back in whichever shape
+                // its current namespace expects (a $type/collection mismatch
+                // would produce an incoherent record).
+                const reviewCollection = collectionFromUri(reviewUri);
                 const reviewRkeyMatch = reviewUri.match(/\/([^\/]+)$/);
                 if (reviewRkeyMatch) {
+                  const isNewShape = reviewCollection === NEW_NSID.review;
+                  const updatedReviewRecord = isNewShape
+                    ? ({
+                        $type: 'social.popfeed.feed.review',
+                        text: reviewText.trim(),
+                        facets: [],
+                        tags: [],
+                        rating: Math.round(Number(rating) * 2),
+                        isRevisit: false,
+                        containsSpoilers: false,
+                        notes: notes || undefined,
+                        mediaItemId,
+                        creativeWorkType: mediaType as any,
+                        createdAt: reviewNow.toISOString(),
+                        updatedAt: reviewNow.toISOString(),
+                      } satisfies SocialPopfeedFeedReview.Record)
+                    : ({
+                        $type: 'app.collectivesocial.feed.review',
+                        text: reviewText.trim(),
+                        rating: Number(rating),
+                        notes: notes || undefined,
+                        mediaItemId,
+                        mediaType: mediaType as any,
+                        createdAt: reviewNow.toISOString(),
+                        updatedAt: reviewNow.toISOString(),
+                      } as AppCollectiveSocialFeedReview.Record);
+
                   await agent.api.com.atproto.repo.putRecord({
                     repo: agent.did!,
-                    collection: 'app.collectivesocial.feed.review',
+                    collection: reviewCollection,
                     rkey: reviewRkeyMatch[1],
-                    record: reviewRecord as any,
+                    record: updatedReviewRecord as any,
                   });
                 }
               } else {
-                // Create new review
+                // Create new review, always under the new namespace
+                const reviewRecord: SocialPopfeedFeedReview.Record = {
+                  $type: 'social.popfeed.feed.review',
+                  text: reviewText.trim(),
+                  facets: [],
+                  tags: [],
+                  // Old scale is 0-5 (half-steps); new scale is 0-10 integer.
+                  rating: Math.round(Number(rating) * 2),
+                  isRevisit: false,
+                  containsSpoilers: false,
+                  notes: notes || undefined,
+                  mediaItemId,
+                  creativeWorkType: mediaType as any,
+                  createdAt: reviewNow.toISOString(),
+                  updatedAt: reviewNow.toISOString(),
+                };
+
                 const reviewResponse =
                   await agent.api.com.atproto.repo.createRecord({
                     repo: agent.did!,
-                    collection: 'app.collectivesocial.feed.review',
+                    collection: NEW_NSID.review,
                     record: reviewRecord as any,
                   });
                 reviewUri = reviewResponse.data.uri;

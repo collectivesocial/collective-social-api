@@ -1,0 +1,140 @@
+{
+  "lexicon": 1,
+  "id": "social.popfeed.feed.review",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A review of a media item, embedding the media's display metadata.",
+      "key": "tid",
+      "required": ["createdAt"],
+      "record": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the media item being reviewed.",
+            "maxGraphemes": 200,
+            "maxLength": 2000
+          },
+          "text": {
+            "type": "string",
+            "description": "The review text content.",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "facets": {
+            "type": "array",
+            "description": "Rich-text facets (e.g. mentions, links) within the review text.",
+            "items": { "type": "unknown" },
+            "default": []
+          },
+          "tags": {
+            "type": "array",
+            "description": "Freeform tags for the review.",
+            "items": {
+              "type": "string",
+              "maxLength": 640,
+              "maxGraphemes": 64
+            },
+            "default": []
+          },
+          "rating": {
+            "type": "integer",
+            "description": "Rating from 0 to 10.",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "genres": {
+            "type": "array",
+            "description": "Genres associated with the media item.",
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "isRevisit": {
+            "type": "boolean",
+            "description": "Whether this review is for a re-read/re-watch rather than a first experience.",
+            "default": false
+          },
+          "containsSpoilers": {
+            "type": "boolean",
+            "description": "Whether this review contains spoilers.",
+            "default": false
+          },
+          "mainCredit": {
+            "type": "string",
+            "description": "Primary credited person for the media (e.g. book author, film director).",
+            "maxGraphemes": 200,
+            "maxLength": 2000
+          },
+          "mainCreditRole": {
+            "type": "string",
+            "description": "Role of the main credit (e.g. author, director, host).",
+            "maxLength": 64
+          },
+          "creativeWorkType": {
+            "type": "string",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, video, etc.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "course",
+              "video"
+            ],
+            "maxLength": 64
+          },
+          "posterUrl": {
+            "type": "string",
+            "description": "URL of the media item's poster/cover image.",
+            "maxLength": 2000
+          },
+          "backdropUrl": {
+            "type": "string",
+            "description": "URL of the media item's backdrop image.",
+            "maxLength": 2000
+          },
+          "identifiers": {
+            "type": "ref",
+            "ref": "social.popfeed.feed.listitem#identifiers"
+          },
+          "releaseDate": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Release date of the media item."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Private notes about the media item. Only visible to the owner. (Collective Social extension field, not part of the base popfeed schema.)",
+            "maxGraphemes": 3000,
+            "maxLength": 30000
+          },
+          "listItem": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Optional reference (AT-URI) to the associated list item. (Collective Social extension field.)"
+          },
+          "mediaItemId": {
+            "type": "integer",
+            "description": "Reference to media_items table for aggregated data. (Collective Social extension field, not part of the base popfeed schema.)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this review was created."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this review was last updated."
+          }
+        }
+      }
+    }
+  }
+}
