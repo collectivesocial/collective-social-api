@@ -1,4 +1,4 @@
-import { Agent } from '@atproto/api';
+import { publicAgent } from '../lib/publicAgent';
 
 export interface UserProfile {
   did: string;
@@ -20,8 +20,7 @@ export async function enrichWithUserProfiles(
   await Promise.all(
     uniqueDids.map(async (did) => {
       try {
-        const agent = new Agent({ service: 'https://public.api.bsky.app' });
-        const profile = await agent.getProfile({ actor: did });
+        const profile = await publicAgent.getProfile({ actor: did });
         profiles[did] = {
           did: profile.data.did,
           handle: profile.data.handle,

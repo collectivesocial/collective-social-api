@@ -1,12 +1,10 @@
 import express, { Request, Response } from 'express';
-import { Agent } from '@atproto/api';
 import { getUserByHandle } from '../models/user';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import { listRecordsMerged } from '../lexicon/readMerge';
-
-const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
+import { publicAgent } from '../lib/publicAgent';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();

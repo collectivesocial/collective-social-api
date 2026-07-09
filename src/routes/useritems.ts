@@ -10,6 +10,7 @@ import {
 import { getSessionAgent } from '../auth/agent';
 import { sql } from 'kysely';
 import { NEW_NSID, collectionFromUri } from '../lexicon/collections';
+import { publicAgent } from '../lib/publicAgent';
 
 // Helper function to get the rating column name for a given rating value
 const getRatingColumnName = (rating: number): string => {
@@ -285,7 +286,7 @@ export const createRouter = (ctx: AppContext) => {
             let did = recommender;
             if (!recommender.startsWith('did:')) {
               try {
-                const resolved = await agent.resolveHandle({
+                const resolved = await publicAgent.resolveHandle({
                   handle: recommender,
                 });
                 did = resolved.data.did;
@@ -338,7 +339,7 @@ export const createRouter = (ctx: AppContext) => {
 
         // Create feed event
         try {
-          const profile = await agent.getProfile({ actor: agent.did! });
+          const profile = await publicAgent.getProfile({ actor: agent.did! });
           const statusText =
             status === 'completed'
               ? 'finished'
@@ -667,7 +668,7 @@ export const createRouter = (ctx: AppContext) => {
             // Create feed event for new review
             if (isNewReview) {
               try {
-                const profile = await agent.getProfile({
+                const profile = await publicAgent.getProfile({
                   actor: agent.did!,
                 });
                 const eventName = `${profile.data.handle} reviewed "${existingData.title}"`;

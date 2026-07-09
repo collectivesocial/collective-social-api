@@ -6,10 +6,9 @@ import { config } from '../config';
 import type { AppContext } from '../context';
 import { NEW_NSID } from '../lexicon/collections';
 import type { SocialPopfeedFeedList } from '../types/lexicon';
+import { publicAgent } from '../lib/publicAgent';
 
 type Session = { did?: string };
-
-const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
 /**
  * Middleware to track user activity

@@ -16,6 +16,7 @@ import {
   normalizeListitemValue,
 } from '../lexicon/collections';
 import { listRecordsMerged } from '../lexicon/readMerge';
+import { publicAgent } from '../lib/publicAgent';
 
 // Helper function to get the rating column name for a given rating value
 const getRatingColumnName = (rating: number): string => {
@@ -878,7 +879,7 @@ export const createRouter = (ctx: AppContext) => {
               let did = recommender;
               if (!recommender.startsWith('did:')) {
                 try {
-                  const resolved = await agent.resolveHandle({
+                  const resolved = await publicAgent.resolveHandle({
                     handle: recommender,
                   });
                   did = resolved.data.did;
@@ -1036,7 +1037,9 @@ export const createRouter = (ctx: AppContext) => {
           // Create feed event for new item
           if (mediaType === 'book') {
             try {
-              const profile = await agent.getProfile({ actor: agent.did! });
+              const profile = await publicAgent.getProfile({
+                actor: agent.did!,
+              });
               const userHandle = profile.data.handle;
               const itemStatus = status || 'want';
               let eventName = '';

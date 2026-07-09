@@ -76,11 +76,7 @@ export const createRouter = (ctx: AppContext) => {
           try {
             // Fetch user handles
             const userDids = users.map((user) => user.did);
-            userHandles = await fetchUserHandles(
-              adminAgent,
-              userDids,
-              ctx.logger
-            );
+            userHandles = await fetchUserHandles(userDids, ctx.logger);
           } catch (err) {
             ctx.logger.error(
               { err },
@@ -251,11 +247,7 @@ export const createRouter = (ctx: AppContext) => {
             const uniqueUserDids = [
               ...new Set(shareLinks.map((link) => link.userDid)),
             ];
-            userHandles = await fetchUserHandles(
-              adminAgentForCollections,
-              uniqueUserDids,
-              ctx.logger
-            );
+            userHandles = await fetchUserHandles(uniqueUserDids, ctx.logger);
           } catch (err) {
             ctx.logger.error(
               { err },
