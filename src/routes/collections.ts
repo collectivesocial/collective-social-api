@@ -3,13 +3,20 @@ import { Agent } from '@atproto/api';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import {
-  AppCollectiveSocialFeedList,
-  AppCollectiveSocialFeedListitem,
-  AppCollectiveSocialFeedReview,
   AppCollectiveSocialFeedUseritem,
+  SocialPopfeedFeedList,
+  SocialPopfeedFeedListitem,
+  SocialPopfeedFeedReview,
 } from '../types/lexicon';
 import { getSessionAgent } from '../auth/agent';
 import { sql } from 'kysely';
+import {
+  NEW_NSID,
+  collectionFromUri,
+  normalizeListitemValue,
+} from '../lexicon/collections';
+import { listRecordsMerged } from '../lexicon/readMerge';
+import { publicAgent } from '../lib/publicAgent';
 
 // Helper function to get the rating column name for a given rating value
 const getRatingColumnName = (rating: number): string => {
@@ -32,28 +39,25 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        // List records of type app.collectivesocial.feed.list from the user's repo
-        const response = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records } = await listRecordsMerged(agent, agent.did!, 'list');
 
         // Get all list items to count items per collection
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
+        const { records: itemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
+        );
 
         // Count items per collection
         const itemCounts: Record<string, number> = {};
-        itemsResponse.data.records.forEach((record: any) => {
-          const listUri = record.value.list;
+        itemRecords.forEach((record) => {
+          const listUri = normalizeListitemValue(record.value).listUri;
           itemCounts[listUri] = (itemCounts[listUri] || 0) + 1;
         });
 
         // Count how many times each collection has been copied (children count)
         const copyCounts: Record<string, number> = {};
-        response.data.records.forEach((record: any) => {
+        records.forEach((record) => {
           const parentUri = record.value.parentListUri;
           if (parentUri) {
             copyCounts[parentUri] = (copyCounts[parentUri] || 0) + 1;
@@ -61,7 +65,7 @@ export const createRouter = (ctx: AppContext) => {
         });
 
         res.json({
-          collections: response.data.records.map((record: any) => ({
+          collections: records.map((record) => ({
             uri: record.uri,
             cid: record.cid,
             name: record.value.name,
@@ -69,7 +73,6 @@ export const createRouter = (ctx: AppContext) => {
             parentListUri: record.value.parentListUri || null,
             visibility: record.value.visibility || 'public',
             isDefault: record.value.isDefault || false,
-            purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
             itemCount: itemCounts[record.uri] || 0,
@@ -94,8 +97,7 @@ export const createRouter = (ctx: AppContext) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const { name, description, purpose, visibility, parentListUri } =
-        req.body;
+      const { name, description, visibility, parentListUri } = req.body;
 
       if (!name) {
         return res.status(400).json({ error: 'Name is required' });
@@ -103,25 +105,28 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         // Check if user already has a default list
-        const existingLists = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records: existingLists } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
+        );
 
-        const hasDefaultList = existingLists.data.records.some(
-          (record: any) => record.value.isDefault === true
+        const hasDefaultList = existingLists.some(
+          (record) => record.value.isDefault === true
         );
 
         // Mark as default if this is the user's first list or they have no default
         const isDefault = !hasDefaultList;
 
-        const record: AppCollectiveSocialFeedList.Record = {
-          $type: 'app.collectivesocial.feed.list',
+        const record: SocialPopfeedFeedList.Record = {
+          $type: 'social.popfeed.feed.list',
           name,
           description: description || undefined,
+          tags: [],
+          ordered: false,
+          listType: isDefault ? 'inbox' : 'custom',
           parentListUri: parentListUri || undefined,
           visibility: visibility || 'public',
-          purpose: purpose || 'app.collectivesocial.defs#curatelist',
           isDefault: isDefault || undefined,
           createdAt: new Date().toISOString(),
         };
@@ -129,7 +134,7 @@ export const createRouter = (ctx: AppContext) => {
         // Create a record in the user's repo using the custom lexicon
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
+          collection: NEW_NSID.list,
           record: record as any,
         });
 
@@ -140,7 +145,6 @@ export const createRouter = (ctx: AppContext) => {
           description: description || null,
           parentListUri: parentListUri || null,
           visibility: record.visibility,
-          purpose: record.purpose,
           isDefault: record.isDefault || false,
           itemCount: 0,
         });
@@ -186,14 +190,13 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Get current list record
-        const listsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
-
-        const listRecord = listsResponse.data.records.find(
-          (record: any) => record.uri === listUri
+        const { records: listRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
         );
+
+        const listRecord = listRecords.find((record) => record.uri === listUri);
 
         if (!listRecord) {
           return res.status(404).json({ error: 'List not found' });
@@ -208,8 +211,8 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Update the record
-        const updatedRecord: AppCollectiveSocialFeedList.Record = {
+        // Update the record, preserving whichever namespace it's currently in
+        const updatedRecord = {
           ...currentData,
           name,
           description: description || undefined,
@@ -218,7 +221,7 @@ export const createRouter = (ctx: AppContext) => {
 
         await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
+          collection: collectionFromUri(listUri),
           rkey: rkey,
           record: updatedRecord as any,
         });
@@ -265,14 +268,13 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Get the list record to check if it's the default list
-        const listsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
-
-        const listRecord = listsResponse.data.records.find(
-          (record: any) => record.uri === listUri
+        const { records: listRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
         );
+
+        const listRecord = listRecords.find((record) => record.uri === listUri);
 
         if (!listRecord) {
           return res.status(404).json({ error: 'List not found' });
@@ -297,7 +299,7 @@ export const createRouter = (ctx: AppContext) => {
         // Delete the record from the user's repo
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
+          collection: collectionFromUri(listUri),
           rkey: rkey,
         });
 
@@ -324,13 +326,14 @@ export const createRouter = (ctx: AppContext) => {
         const sourceListUri = decodeURIComponent(req.params.listUri as string);
 
         // Get the source list to clone
-        const listsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records: sourceLists } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
+        );
 
-        const sourceList = listsResponse.data.records.find(
-          (record: any) => record.uri === sourceListUri
+        const sourceList = sourceLists.find(
+          (record) => record.uri === sourceListUri
         );
 
         if (!sourceList) {
@@ -344,58 +347,61 @@ export const createRouter = (ctx: AppContext) => {
         const parentListUri = sourceListData.parentListUri || sourceListUri;
 
         // Create new list with parentListUri set to original source
-        const newListRecord: AppCollectiveSocialFeedList.Record = {
-          $type: 'app.collectivesocial.feed.list',
+        const newListRecord: SocialPopfeedFeedList.Record = {
+          $type: 'social.popfeed.feed.list',
           name: `${sourceListData.name} (Copy)`,
           description: sourceListData.description || undefined,
+          tags: [],
+          ordered: false,
+          listType: sourceListData.listType || 'custom',
           parentListUri: parentListUri,
           visibility: sourceListData.visibility || 'public',
-          purpose:
-            sourceListData.purpose || 'app.collectivesocial.defs#curatelist',
           isDefault: false,
           createdAt: new Date().toISOString(),
         };
 
         const newListResponse = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
+          collection: NEW_NSID.list,
           record: newListRecord as any,
         });
 
         const newListUri = newListResponse.data.uri;
 
         // Get all items from the source list
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
+        const { records: itemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
+        );
 
-        const sourceItems = itemsResponse.data.records.filter(
-          (record: any) => record.value.list === sourceListUri
+        const sourceItems = itemRecords.filter(
+          (record) =>
+            normalizeListitemValue(record.value).listUri === sourceListUri
         );
 
         // Clone each item to the new list
         for (const sourceItem of sourceItems) {
-          const sourceItemData = sourceItem.value as any;
+          const sourceItemData = normalizeListitemValue(sourceItem.value);
           const mediaItemId = sourceItemData.mediaItemId;
 
-          const newItemRecord: AppCollectiveSocialFeedListitem.Record = {
-            $type: 'app.collectivesocial.feed.listitem',
-            list: newListUri,
+          const newItemRecord: SocialPopfeedFeedListitem.Record = {
+            $type: 'social.popfeed.feed.listitem',
+            listUri: newListUri,
             title: sourceItemData.title,
-            creator: sourceItemData.creator || undefined,
-            mediaType: sourceItemData.mediaType || 'book',
+            mainCredit: sourceItemData.mainCredit || undefined,
+            creativeWorkType: sourceItemData.creativeWorkType || 'book',
             mediaItemId: mediaItemId || undefined,
             order:
               sourceItemData.order !== undefined
                 ? sourceItemData.order
                 : undefined,
-            createdAt: new Date().toISOString(),
-          };
+            addedAt: new Date().toISOString(),
+          } as any;
 
           await agent.api.com.atproto.repo.createRecord({
             repo: agent.did!,
-            collection: 'app.collectivesocial.feed.listitem',
+            collection: NEW_NSID.listitem,
             record: newItemRecord as any,
           });
         }
@@ -437,10 +443,11 @@ export const createRouter = (ctx: AppContext) => {
         const listUri = decodeURIComponent(req.params.listUri as string);
 
         // List all listitem records from the user's repo
-        const response = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
+        const { records: listitemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
+        );
 
         // Also fetch all useritem records to enrich list items with status/rating/notes
         const useritemsResponse = await agent.api.com.atproto.repo.listRecords({
@@ -467,14 +474,14 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Filter items that belong to this list
-        const filteredRecords = response.data.records.filter(
-          (record: any) => record.value.list === listUri
+        const filteredRecords = listitemRecords.filter(
+          (record) => normalizeListitemValue(record.value).listUri === listUri
         );
 
         // Batch fetch all media items to avoid N+1 queries
         const mediaItemIds = filteredRecords
-          .filter((record: any) => record.value.mediaItemId)
-          .map((record: any) => record.value.mediaItemId);
+          .filter((record) => normalizeListitemValue(record.value).mediaItemId)
+          .map((record) => normalizeListitemValue(record.value).mediaItemId);
 
         const mediaItems =
           mediaItemIds.length > 0
@@ -488,21 +495,22 @@ export const createRouter = (ctx: AppContext) => {
         const mediaItemMap = new Map(mediaItems.map((item) => [item.id, item]));
 
         // Map items with enriched data
-        const itemResults = filteredRecords.map((record: any) => {
+        const itemResults = filteredRecords.map((record) => {
+          const value = normalizeListitemValue(record.value);
           try {
-            const useritemData = record.value.mediaItemId
-              ? useritemsByMediaId[record.value.mediaItemId] || {}
+            const useritemData = value.mediaItemId
+              ? useritemsByMediaId[value.mediaItemId] || {}
               : {};
 
             const item: any = {
               uri: record.uri,
               cid: record.cid,
-              title: record.value.title,
-              creator: record.value.creator || null,
-              order: record.value.order !== undefined ? record.value.order : 0,
-              mediaType: record.value.mediaType || null,
-              mediaItemId: record.value.mediaItemId || null,
-              userItemUri: record.value.userItem || useritemData.uri || null,
+              title: value.title,
+              creator: value.creator || null,
+              order: value.order !== undefined ? value.order : 0,
+              mediaType: value.mediaType || null,
+              mediaItemId: value.mediaItemId || null,
+              userItemUri: value.userItem || useritemData.uri || null,
               // Enriched from useritem
               status: useritemData.status || null,
               rating: useritemData.rating ?? null,
@@ -510,12 +518,12 @@ export const createRouter = (ctx: AppContext) => {
               review: useritemData.review || null,
               completedAt: useritemData.completedAt || null,
               recommendations: useritemData.recommendations || [],
-              createdAt: record.value.createdAt,
+              createdAt: value.createdAt,
             };
 
             // If there's a mediaItemId, enrich with media_items data
-            if (record.value.mediaItemId) {
-              const mediaItem = mediaItemMap.get(record.value.mediaItemId);
+            if (value.mediaItemId) {
+              const mediaItem = mediaItemMap.get(value.mediaItemId);
               if (mediaItem) {
                 item.mediaItem = {
                   id: mediaItem.id,
@@ -584,14 +592,15 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         // Find the user's default list
-        const listsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records: listRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
+        );
 
         let defaultListUri: string | null = null;
 
-        for (const record of listsResponse.data.records) {
+        for (const record of listRecords) {
           if ((record.value as any).isDefault === true) {
             defaultListUri = record.uri;
             break;
@@ -600,32 +609,35 @@ export const createRouter = (ctx: AppContext) => {
 
         // Create a default list if none exists
         if (!defaultListUri) {
-          const listRecord: AppCollectiveSocialFeedList.Record = {
-            $type: 'app.collectivesocial.feed.list',
+          const listRecord: SocialPopfeedFeedList.Record = {
+            $type: 'social.popfeed.feed.list',
             name: 'My Library',
+            tags: [],
+            ordered: false,
+            listType: 'inbox',
             visibility: 'public',
-            purpose: 'app.collectivesocial.defs#curatelist',
             isDefault: true,
             createdAt: new Date().toISOString(),
           };
 
           const createRes = await agent.api.com.atproto.repo.createRecord({
             repo: agent.did!,
-            collection: 'app.collectivesocial.feed.list',
+            collection: NEW_NSID.list,
             record: listRecord as any,
           });
           defaultListUri = createRes.data.uri;
         }
 
         // Check for existing item in the default list
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
+        const { records: itemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
+        );
 
-        const existingItem = itemsResponse.data.records.find((record: any) => {
-          const val = record.value as any;
-          if (val.list !== defaultListUri) return false;
+        const existingItem = itemRecords.find((record) => {
+          const val = normalizeListitemValue(record.value);
+          if (val.listUri !== defaultListUri) return false;
           if (mediaItemId) return val.mediaItemId === mediaItemId;
           return val.title === title;
         });
@@ -736,28 +748,29 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Create the listitem
-        const existingInList = itemsResponse.data.records
-          .filter((r: any) => r.value.list === defaultListUri)
-          .map((r: any) => r.value.order || 0);
+        const existingInList = itemRecords
+          .map((r) => normalizeListitemValue(r.value))
+          .filter((v) => v.listUri === defaultListUri)
+          .map((v) => v.order || 0);
         const maxOrder =
           existingInList.length > 0 ? Math.max(...existingInList) : 0;
 
         const now = new Date();
-        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
-          $type: 'app.collectivesocial.feed.listitem',
-          list: defaultListUri!,
+        const listItemRecord: SocialPopfeedFeedListitem.Record = {
+          $type: 'social.popfeed.feed.listitem',
+          listUri: defaultListUri!,
           title,
-          creator: creator || undefined,
+          mainCredit: creator || undefined,
           order: maxOrder + 1,
           mediaItemId: mediaItemId || undefined,
-          mediaType: mediaType || undefined,
+          creativeWorkType: mediaType || undefined,
           userItem: userItemUri || undefined,
-          createdAt: now.toISOString(),
+          addedAt: now.toISOString(),
         };
 
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
+          collection: NEW_NSID.listitem,
           record: listItemRecord as any,
         });
 
@@ -807,23 +820,21 @@ export const createRouter = (ctx: AppContext) => {
         const listUri = decodeURIComponent(req.params.listUri as string);
 
         // Check if item already exists in this list
-        const existingItemsResponse =
-          await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.listitem',
-          });
-
-        const existingItem = existingItemsResponse.data.records.find(
-          (record: any) => {
-            const itemData = record.value as any;
-            if (itemData.list !== listUri) return false;
-            if (mediaItemId) {
-              return itemData.mediaItemId === mediaItemId;
-            } else {
-              return itemData.title === title;
-            }
-          }
+        const { records: existingItemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
         );
+
+        const existingItem = existingItemRecords.find((record) => {
+          const itemData = normalizeListitemValue(record.value);
+          if (itemData.listUri !== listUri) return false;
+          if (mediaItemId) {
+            return itemData.mediaItemId === mediaItemId;
+          } else {
+            return itemData.title === title;
+          }
+        });
 
         if (existingItem) {
           // Item already in this list — return it without duplicating
@@ -868,7 +879,7 @@ export const createRouter = (ctx: AppContext) => {
               let did = recommender;
               if (!recommender.startsWith('did:')) {
                 try {
-                  const resolved = await agent.resolveHandle({
+                  const resolved = await publicAgent.resolveHandle({
                     handle: recommender,
                   });
                   did = resolved.data.did;
@@ -935,12 +946,17 @@ export const createRouter = (ctx: AppContext) => {
             const reviewNow = new Date();
             let reviewUri: string | null = null;
             try {
-              const reviewRecord: AppCollectiveSocialFeedReview.Record = {
-                $type: 'app.collectivesocial.feed.review',
+              const reviewRecord: SocialPopfeedFeedReview.Record = {
+                $type: 'social.popfeed.feed.review',
                 text: review.trim(),
-                rating: Number(rating),
+                facets: [],
+                tags: [],
+                // Old scale is 0-5 (half-steps); new scale is 0-10 integer.
+                rating: Math.round(Number(rating) * 2),
+                isRevisit: false,
+                containsSpoilers: false,
+                creativeWorkType: mediaType as any,
                 mediaItemId: mediaItemId,
-                mediaType: mediaType as any,
                 listItem: userItemUri!,
                 createdAt: reviewNow.toISOString(),
                 updatedAt: reviewNow.toISOString(),
@@ -949,7 +965,7 @@ export const createRouter = (ctx: AppContext) => {
               const reviewResponse =
                 await agent.api.com.atproto.repo.createRecord({
                   repo: agent.did!,
-                  collection: 'app.collectivesocial.feed.review',
+                  collection: NEW_NSID.review,
                   record: reviewRecord as any,
                 });
 
@@ -1021,7 +1037,9 @@ export const createRouter = (ctx: AppContext) => {
           // Create feed event for new item
           if (mediaType === 'book') {
             try {
-              const profile = await agent.getProfile({ actor: agent.did! });
+              const profile = await publicAgent.getProfile({
+                actor: agent.did!,
+              });
               const userHandle = profile.data.handle;
               const itemStatus = status || 'want';
               let eventName = '';
@@ -1053,29 +1071,30 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // --- Create the lightweight listitem record ---
-        const existingItemsInList = existingItemsResponse.data.records
-          .filter((record: any) => record.value.list === listUri)
-          .map((record: any) => record.value.order || 0);
+        const existingItemsInList = existingItemRecords
+          .map((record) => normalizeListitemValue(record.value))
+          .filter((value) => value.listUri === listUri)
+          .map((value) => value.order || 0);
         const maxOrder =
           existingItemsInList.length > 0 ? Math.max(...existingItemsInList) : 0;
         const newOrder = maxOrder + 1;
 
         const now = new Date();
-        const listItemRecord: AppCollectiveSocialFeedListitem.Record = {
-          $type: 'app.collectivesocial.feed.listitem',
-          list: listUri,
+        const listItemRecord: SocialPopfeedFeedListitem.Record = {
+          $type: 'social.popfeed.feed.listitem',
+          listUri: listUri,
           title,
-          creator: creator || undefined,
+          mainCredit: creator || undefined,
           order: newOrder,
           mediaItemId: mediaItemId || undefined,
-          mediaType: mediaType || undefined,
+          creativeWorkType: mediaType || undefined,
           userItem: userItemUri || undefined,
-          createdAt: now.toISOString(),
+          addedAt: now.toISOString(),
         };
 
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
+          collection: NEW_NSID.listitem,
           record: listItemRecord as any,
         });
 
@@ -1128,14 +1147,13 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Get the current item record
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
-
-        const itemRecord = itemsResponse.data.records.find(
-          (record: any) => record.uri === itemUri
+        const { records: itemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
         );
+
+        const itemRecord = itemRecords.find((record) => record.uri === itemUri);
 
         if (!itemRecord) {
           return res.status(404).json({ error: 'Item not found' });
@@ -1150,15 +1168,16 @@ export const createRouter = (ctx: AppContext) => {
         }
         const rkey = rkeyMatch[1];
 
-        // Update the record with new order (lightweight - only listitem fields)
-        const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
+        // Update the record with new order (lightweight - only listitem fields),
+        // preserving whichever namespace it's currently in.
+        const updatedRecord = {
           ...currentData,
           ...(order !== undefined && { order }),
         };
 
         await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
+          collection: collectionFromUri(itemUri),
           rkey: rkey,
           record: updatedRecord as any,
         });
@@ -1202,15 +1221,16 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Get all items to update
-        const itemsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
-        });
+        const { records: itemRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'listitem'
+        );
 
         // Update each item's order
         for (const itemUpdate of items) {
-          const itemRecord = itemsResponse.data.records.find(
-            (record: any) => record.uri === itemUpdate.uri
+          const itemRecord = itemRecords.find(
+            (record) => record.uri === itemUpdate.uri
           );
 
           if (!itemRecord) continue;
@@ -1220,14 +1240,14 @@ export const createRouter = (ctx: AppContext) => {
           if (!rkeyMatch) continue;
           const rkey = rkeyMatch[1];
 
-          const updatedRecord: AppCollectiveSocialFeedListitem.Record = {
+          const updatedRecord = {
             ...(itemRecord.value as any),
             order: itemUpdate.order,
           };
 
           await agent.api.com.atproto.repo.putRecord({
             repo: agent.did!,
-            collection: 'app.collectivesocial.feed.listitem',
+            collection: collectionFromUri(itemUpdate.uri),
             rkey: rkey,
             record: updatedRecord as any,
           });
@@ -1281,7 +1301,7 @@ export const createRouter = (ctx: AppContext) => {
         // The useritem record is NOT deleted — the user still "has" this media item
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.listitem',
+          collection: collectionFromUri(itemUri),
           rkey: rkey,
         });
 
@@ -1311,34 +1331,29 @@ export const createRouter = (ctx: AppContext) => {
       }
 
       try {
-        // List records of type app.collectivesocial.list from the specified user's repo
-        const response = await queryAgent.api.com.atproto.repo.listRecords({
-          repo: did,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records } = await listRecordsMerged(queryAgent, did, 'list');
 
         // Get all list items to count items per collection
-        const itemsResponse = await queryAgent.api.com.atproto.repo.listRecords(
-          {
-            repo: did,
-            collection: 'app.collectivesocial.feed.listitem',
-          }
+        const { records: itemRecords } = await listRecordsMerged(
+          queryAgent,
+          did,
+          'listitem'
         );
 
         // Count items per collection
         const itemCounts: Record<string, number> = {};
-        itemsResponse.data.records.forEach((record: any) => {
-          const listUri = record.value.list;
+        itemRecords.forEach((record) => {
+          const listUri = normalizeListitemValue(record.value).listUri;
           itemCounts[listUri] = (itemCounts[listUri] || 0) + 1;
         });
 
         // Filter to only public collections
-        const publicCollections = response.data.records
-          .filter((record: any) => {
+        const publicCollections = records
+          .filter((record) => {
             const visibility = record.value.visibility || 'public';
             return visibility === 'public';
           })
-          .map((record: any) => ({
+          .map((record) => ({
             uri: record.uri,
             cid: record.cid,
             name: record.value.name,
@@ -1346,7 +1361,6 @@ export const createRouter = (ctx: AppContext) => {
             parentListUri: record.value.parentListUri || null,
             visibility: record.value.visibility || 'public',
             isDefault: record.value.isDefault || false,
-            purpose: record.value.purpose,
             avatar: record.value.avatar || null,
             createdAt: record.value.createdAt,
             itemCount: itemCounts[record.uri] || 0,
@@ -1391,25 +1405,24 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         // Get all public collections for this user
-        const collectionsResponse =
-          await queryAgent.api.com.atproto.repo.listRecords({
-            repo: did,
-            collection: 'app.collectivesocial.feed.list',
-          });
+        const { records: collectionRecords } = await listRecordsMerged(
+          queryAgent,
+          did,
+          'list'
+        );
 
-        const publicCollectionUris = collectionsResponse.data.records
-          .filter((record: any) => {
+        const publicCollectionUris = collectionRecords
+          .filter((record) => {
             const visibility = record.value.visibility || 'public';
             return visibility === 'public';
           })
-          .map((record: any) => record.uri);
+          .map((record) => record.uri);
 
         // Get all list items for this user
-        const itemsResponse = await queryAgent.api.com.atproto.repo.listRecords(
-          {
-            repo: did,
-            collection: 'app.collectivesocial.feed.listitem',
-          }
+        const { records: itemRecords } = await listRecordsMerged(
+          queryAgent,
+          did,
+          'listitem'
         );
 
         // Get all useritem records for this user (status lives here now)
@@ -1434,29 +1447,32 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // Filter to items from public collections whose useritem has in-progress status
-        const inProgressItems = itemsResponse.data.records
-          .filter((record: any) => {
-            const listUri = record.value.list;
-            if (!publicCollectionUris.includes(listUri)) return false;
-            const useritem = record.value.mediaItemId
-              ? useritemsByMediaId[record.value.mediaItemId]
+        const inProgressItems = itemRecords
+          .map((record) => ({
+            record,
+            value: normalizeListitemValue(record.value),
+          }))
+          .filter(({ value }) => {
+            if (!publicCollectionUris.includes(value.listUri)) return false;
+            const useritem = value.mediaItemId
+              ? useritemsByMediaId[value.mediaItemId]
               : null;
             return useritem && useritem.status === 'in-progress';
           })
-          .map((record: any) => {
-            const useritem = useritemsByMediaId[record.value.mediaItemId] || {};
+          .map(({ record, value }) => {
+            const useritem = useritemsByMediaId[value.mediaItemId] || {};
             return {
               uri: record.uri,
               cid: record.cid,
-              title: record.value.title,
-              creator: record.value.creator || null,
-              mediaType: record.value.mediaType,
-              mediaItemId: record.value.mediaItemId || null,
+              title: value.title,
+              creator: value.creator || null,
+              mediaType: value.mediaType,
+              mediaItemId: value.mediaItemId || null,
               status: useritem.status || null,
               rating: useritem.rating ?? null,
               completedAt: useritem.completedAt || null,
-              createdAt: record.value.createdAt,
-              listUri: record.value.list,
+              createdAt: value.createdAt,
+              listUri: value.listUri,
             };
           });
 

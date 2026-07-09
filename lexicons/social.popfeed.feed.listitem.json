@@ -1,0 +1,133 @@
+{
+  "lexicon": 1,
+  "id": "social.popfeed.feed.listitem",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A media item's membership on a list, embedding the media's display metadata.",
+      "key": "tid",
+      "required": ["listUri", "title", "addedAt"],
+      "record": {
+        "type": "object",
+        "properties": {
+          "listUri": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Reference (AT-URI) to the list this item belongs to."
+          },
+          "title": {
+            "type": "string",
+            "description": "Title of the media item.",
+            "maxGraphemes": 500,
+            "maxLength": 5000
+          },
+          "mainCredit": {
+            "type": "string",
+            "description": "Primary credited person for the media (e.g. book author, film director).",
+            "maxGraphemes": 200,
+            "maxLength": 2000
+          },
+          "mainCreditRole": {
+            "type": "string",
+            "description": "Role of the main credit (e.g. author, director, host).",
+            "maxLength": 64
+          },
+          "creativeWorkType": {
+            "type": "string",
+            "description": "Type of media: book, movie, tv, podcast, article, game, music, course, video, etc.",
+            "knownValues": [
+              "book",
+              "movie",
+              "tv",
+              "podcast",
+              "article",
+              "game",
+              "music",
+              "course",
+              "video"
+            ],
+            "maxLength": 64
+          },
+          "genres": {
+            "type": "array",
+            "description": "Genres associated with the media item.",
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "listType": {
+            "type": "string",
+            "description": "Denormalized copy of the parent list's listType at the time this item was added.",
+            "maxLength": 64
+          },
+          "posterUrl": {
+            "type": "string",
+            "description": "URL of the media item's poster/cover image.",
+            "maxLength": 2000
+          },
+          "backdropUrl": {
+            "type": "string",
+            "description": "URL of the media item's backdrop image.",
+            "maxLength": 2000
+          },
+          "identifiers": {
+            "type": "ref",
+            "ref": "#identifiers"
+          },
+          "releaseDate": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Release date of the media item."
+          },
+          "bookProgress": {
+            "type": "ref",
+            "ref": "#bookProgress",
+            "description": "Optional embedded reading/watch progress for this item."
+          },
+          "mediaItemId": {
+            "type": "integer",
+            "description": "Reference to media_items table for aggregated data. (Collective Social extension field, not part of the base popfeed schema.)"
+          },
+          "order": {
+            "type": "integer",
+            "description": "Display order within the list. Higher numbers appear first (top). 0 appears at bottom. (Collective Social extension field, not part of the base popfeed schema.)"
+          },
+          "userItem": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "Reference (AT-URI) to the user's app.collectivesocial.feed.useritem record for this media item. (Collective Social extension field.)"
+          },
+          "addedAt": {
+            "type": "string",
+            "format": "datetime",
+            "description": "Timestamp when this item was added to the list."
+          }
+        }
+      }
+    },
+    "identifiers": {
+      "type": "object",
+      "properties": {
+        "isbn10": { "type": "string", "maxLength": 10 },
+        "isbn13": { "type": "string", "maxLength": 13 },
+        "imdbId": { "type": "string", "maxLength": 32 },
+        "tmdbId": { "type": "string", "maxLength": 32 }
+      }
+    },
+    "bookProgress": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "knownValues": ["want", "in_progress", "completed"]
+        },
+        "percent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "updatedAt": { "type": "string", "format": "datetime" },
+        "totalPages": { "type": "integer" },
+        "currentPage": { "type": "integer" }
+      }
+    }
+  }
+}

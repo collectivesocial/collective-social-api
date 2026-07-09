@@ -4,10 +4,11 @@ import { getIronSession } from 'iron-session';
 import { sql } from 'kysely';
 import { config } from '../config';
 import type { AppContext } from '../context';
+import { NEW_NSID } from '../lexicon/collections';
+import type { SocialPopfeedFeedList } from '../types/lexicon';
+import { publicAgent } from '../lib/publicAgent';
 
 type Session = { did?: string };
-
-const publicAgent = new Agent({ service: 'https://public.api.bsky.app' });
 
 /**
  * Middleware to track user activity
@@ -55,7 +56,10 @@ export function createUserActivityTracker(ctx: AppContext) {
               const displayName = profile.data.displayName || null;
               const avatar = profile.data.avatar || null;
 
-              // Create user record with profile info
+              // Create user record with profile info. Brand-new users are
+              // popfeed-native from day one — nothing to migrate — so mark
+              // popfeedMigrationStatus complete immediately rather than
+              // leaving it at the column default of 'pending'.
               await ctx.db
                 .insertInto('users')
                 .values({
@@ -65,6 +69,8 @@ export function createUserActivityTracker(ctx: AppContext) {
                   avatar: avatar,
                   firstLoginAt: now,
                   lastActivityAt: now,
+                  popfeedMigrationStatus: 'complete',
+                  popfeedMigratedAt: now,
                   createdAt: now,
                   updatedAt: now,
                 } as any)
@@ -79,20 +85,22 @@ export function createUserActivityTracker(ctx: AppContext) {
                 )
                 .execute();
 
-              const defaultListRecord = {
-                $type: 'app.collectivesocial.feed.list',
+              const defaultListRecord: SocialPopfeedFeedList.Record = {
+                $type: 'social.popfeed.feed.list',
                 name: 'Inbox',
                 description:
                   'Your default inbox for recommendations and items to review',
+                tags: [],
+                ordered: false,
+                listType: 'inbox',
                 visibility: 'public',
                 isDefault: true,
-                purpose: 'app.collectivesocial.defs#curatelist',
                 createdAt: now.toISOString(),
               };
 
               await agent.api.com.atproto.repo.createRecord({
                 repo: session.did,
-                collection: 'app.collectivesocial.feed.list',
+                collection: NEW_NSID.list,
                 record: defaultListRecord as any,
               });
 

@@ -97,11 +97,7 @@ export const createRouter = (ctx: AppContext) => {
             feedback.filter((item) => item.userDid).map((item) => item.userDid!)
           ),
         ];
-        const userHandles = await fetchUserHandles(
-          agent,
-          uniqueDids,
-          ctx.logger
-        );
+        const userHandles = await fetchUserHandles(uniqueDids, ctx.logger);
 
         const feedbackWithHandles = feedback.map((item) => ({
           ...item,

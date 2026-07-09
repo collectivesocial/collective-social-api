@@ -3,7 +3,9 @@ import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import { TID } from '@atproto/common';
-import { AppCollectiveSocialFeedComment } from '../types/lexicon';
+import { SocialPopfeedFeedComment } from '../types/lexicon';
+import { NEW_NSID, collectionFromUri } from '../lexicon/collections';
+import { publicAgent } from '../lib/publicAgent';
 
 export const createRouter = (ctx: AppContext) => {
   const router = express.Router();
@@ -44,8 +46,8 @@ export const createRouter = (ctx: AppContext) => {
 
       try {
         const now = new Date().toISOString();
-        const record: AppCollectiveSocialFeedComment.Record = {
-          $type: 'app.collectivesocial.feed.comment',
+        const record: SocialPopfeedFeedComment.Record = {
+          $type: 'social.popfeed.feed.comment',
           text: text.trim(),
           reviewRef: reviewUri
             ? {
@@ -74,7 +76,7 @@ export const createRouter = (ctx: AppContext) => {
 
             const reviewRecord = await agent.api.com.atproto.repo.getRecord({
               repo: did,
-              collection: 'app.collectivesocial.feed.review',
+              collection: collectionFromUri(reviewUri),
               rkey: rkey,
             });
 
@@ -101,7 +103,7 @@ export const createRouter = (ctx: AppContext) => {
 
             const parentRecord = await agent.api.com.atproto.repo.getRecord({
               repo: did,
-              collection: 'app.collectivesocial.feed.comment',
+              collection: collectionFromUri(parentCommentUri),
               rkey: rkey,
             });
 
@@ -121,7 +123,7 @@ export const createRouter = (ctx: AppContext) => {
         // Create the comment record
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.comment',
+          collection: NEW_NSID.comment,
           record: record as any,
         });
 
@@ -174,16 +176,11 @@ export const createRouter = (ctx: AppContext) => {
           .execute();
 
         // Fetch user profile from AT Protocol for each comment
-        const { Agent } = await import('@atproto/api');
         const commentsWithUsers = await Promise.all(
           comments.map(async (comment) => {
             let user = null;
             try {
-              // Create a public agent (no auth needed for profile lookups)
-              const agent = new Agent({
-                service: 'https://public.api.bsky.app',
-              });
-              const profile = await agent.getProfile({
+              const profile = await publicAgent.getProfile({
                 actor: comment.userDid,
               });
               user = {
@@ -233,16 +230,13 @@ export const createRouter = (ctx: AppContext) => {
           .execute();
 
         // Fetch user profile from AT Protocol for each reply
-        const { Agent } = await import('@atproto/api');
         const repliesWithUsers = await Promise.all(
           replies.map(async (reply) => {
             let user = null;
             try {
-              // Create a public agent (no auth needed for profile lookups)
-              const agent = new Agent({
-                service: 'https://public.api.bsky.app',
+              const profile = await publicAgent.getProfile({
+                actor: reply.userDid,
               });
-              const profile = await agent.getProfile({ actor: reply.userDid });
               user = {
                 did: profile.data.did,
                 handle: profile.data.handle,
@@ -319,15 +313,16 @@ export const createRouter = (ctx: AppContext) => {
         const uriParts = commentUri.split('/');
         const rkey = uriParts[uriParts.length - 1];
 
-        // Fetch the current record
+        // Fetch the current record (preserving whichever namespace it's in)
+        const commentCollection = collectionFromUri(commentUri);
         const currentRecord = await agent.api.com.atproto.repo.getRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.comment',
+          collection: commentCollection,
           rkey: rkey,
         });
 
         const now = new Date().toISOString();
-        const updatedRecord: AppCollectiveSocialFeedComment.Record = {
+        const updatedRecord = {
           ...(currentRecord.data.value as any),
           text: text.trim(),
           updatedAt: now,
@@ -336,7 +331,7 @@ export const createRouter = (ctx: AppContext) => {
         // Update the record in ATProto
         const response = await agent.api.com.atproto.repo.putRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.comment',
+          collection: commentCollection,
           rkey: rkey,
           record: updatedRecord as any,
         });
@@ -403,7 +398,7 @@ export const createRouter = (ctx: AppContext) => {
         // Delete from ATProto
         await agent.api.com.atproto.repo.deleteRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.comment',
+          collection: collectionFromUri(commentUri),
           rkey: rkey,
         });
 

@@ -9,8 +9,10 @@ import type { AppContext } from '../context';
 import { config } from '../config';
 import { handler } from '../lib/http';
 import { ifString } from '../lib/stringUtil';
+import { Agent } from '@atproto/api';
 import { SESSION_OPTIONS, Session } from '../auth/session';
 import { COLLECTIVE_SCOPES } from '../auth/scopes';
+import { migrateUserToPopfeed } from '../services/popfeedMigration';
 
 // Max age, in seconds, for static routes and assets
 const MAX_AGE = config.nodeEnv === 'production' ? 60 : 300;
@@ -77,6 +79,19 @@ export const createRouter = (ctx: AppContext): RequestListener => {
         session.did = oauth.session.did;
 
         await session.save();
+
+        // Migrate this user's app.collectivesocial.feed.* records to
+        // social.popfeed.feed.* now, while we have a freshly-scoped OAuth
+        // grant covering both namespaces. Never blocks login on failure.
+        try {
+          const agent = new Agent(oauth.session);
+          await migrateUserToPopfeed(ctx, oauth.session.did, agent);
+        } catch (err) {
+          ctx.logger.error(
+            { err, did: oauth.session.did },
+            'popfeed migration failed during oauth callback'
+          );
+        }
 
         return res.redirect(redirectUrl);
       } catch (err) {

@@ -21,6 +21,26 @@ export async function getSessionAgent(
   res.setHeader('cache-control', 'private, no-store');
 
   try {
+    // A restored session's OAuth grant reflects whatever scope was in effect
+    // at the time the user last authorized this app. Users who haven't
+    // completed the popfeed migration yet (see src/services/popfeedMigration.ts)
+    // may be carrying a token scoped under the pre-migration collection set,
+    // so force them through a fresh /login rather than silently proceeding.
+    const user = await ctx.db
+      .selectFrom('users')
+      .select(['popfeedMigrationStatus'])
+      .where('did', '=', session.did)
+      .executeTakeFirst();
+
+    if (user && user.popfeedMigrationStatus !== 'complete') {
+      ctx.logger.info(
+        { did: session.did },
+        'destroying session pending popfeed migration re-auth'
+      );
+      await session.destroy();
+      return null;
+    }
+
     const oauthSession = await ctx.oauthClient.restore(session.did);
     return oauthSession ? new Agent(oauthSession) : null;
   } catch (err) {

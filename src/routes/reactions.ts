@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import type { AppContext } from '../context';
 import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
+import { NEW_NSID, collectionFromUri } from '../lexicon/collections';
 
 const VALID_EMOJIS = [
   'joy',
@@ -62,7 +63,7 @@ export const createRouter = (ctx: AppContext) => {
 
           await agent.api.com.atproto.repo.deleteRecord({
             repo: agent.did!,
-            collection: 'app.collectivesocial.feed.react',
+            collection: collectionFromUri(existingReaction.uri),
             rkey: rkey,
           });
 
@@ -83,10 +84,7 @@ export const createRouter = (ctx: AppContext) => {
           const uriParts = subjectUri.split('/');
           const rkey = uriParts[uriParts.length - 1];
           const did = uriParts[2];
-          const collection =
-            subjectType === 'review'
-              ? 'app.collectivesocial.feed.review'
-              : 'app.collectivesocial.feed.comment';
+          const collection = collectionFromUri(subjectUri);
 
           const subjectRecord = await agent.api.com.atproto.repo.getRecord({
             repo: did,
@@ -102,17 +100,17 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         const record = {
-          $type: 'app.collectivesocial.feed.react',
+          $type: 'social.popfeed.feed.reaction',
           emoji: emoji,
           subject:
             subjectType === 'review'
               ? {
-                  $type: 'app.collectivesocial.feed.react#reviewRef',
+                  $type: 'social.popfeed.feed.reaction#reviewRef',
                   uri: subjectUri,
                   cid: subjectCid,
                 }
               : {
-                  $type: 'app.collectivesocial.feed.react#commentRef',
+                  $type: 'social.popfeed.feed.reaction#commentRef',
                   uri: subjectUri,
                   cid: subjectCid,
                 },
@@ -121,7 +119,7 @@ export const createRouter = (ctx: AppContext) => {
 
         const response = await agent.api.com.atproto.repo.createRecord({
           repo: agent.did!,
-          collection: 'app.collectivesocial.feed.react',
+          collection: NEW_NSID.reaction,
           record: record as any,
         });
 

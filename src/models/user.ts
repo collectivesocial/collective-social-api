@@ -10,6 +10,9 @@ export interface User {
   firstLoginAt: Date;
   lastActivityAt: Date;
   isAdmin: Generated<boolean>;
+  popfeedMigratedAt: Date | null;
+  popfeedMigrationStatus: 'pending' | 'in_progress' | 'complete' | 'failed';
+  popfeedMigrationError: string | null;
   createdAt: Generated<Date>;
   updatedAt: Generated<Date>;
 }

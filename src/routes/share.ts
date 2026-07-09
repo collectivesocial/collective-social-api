@@ -4,6 +4,7 @@ import { handler } from '../lib/http';
 import { getSessionAgent } from '../auth/agent';
 import { randomBytes } from 'crypto';
 import { config } from '../config';
+import { listRecordsMerged } from '../lexicon/readMerge';
 
 // Generate a URL-safe random string
 const generateShortCode = (length: number = 10): string => {
@@ -111,12 +112,13 @@ export const createRouter = (ctx: AppContext) => {
             title = review?.title ? `Review: ${review.title}` : null;
           } else if (collectionUri) {
             // Fetch collection name from ATProto
-            const listsResponse = await agent.api.com.atproto.repo.listRecords({
-              repo: agent.did!,
-              collection: 'app.collectivesocial.feed.list',
-            });
-            const collection = listsResponse.data.records.find(
-              (record: any) => record.uri === collectionUri
+            const { records: listRecords } = await listRecordsMerged(
+              agent,
+              agent.did!,
+              'list'
+            );
+            const collection = listRecords.find(
+              (record) => record.uri === collectionUri
             );
             title = collection?.value?.name || null;
           } else {
@@ -203,12 +205,13 @@ export const createRouter = (ctx: AppContext) => {
           title = review?.title ? `Review: ${review.title}` : null;
         } else if (collectionUri) {
           // Fetch collection name from ATProto
-          const listsResponse = await agent.api.com.atproto.repo.listRecords({
-            repo: agent.did!,
-            collection: 'app.collectivesocial.feed.list',
-          });
-          const collection = listsResponse.data.records.find(
-            (record: any) => record.uri === collectionUri
+          const { records: listRecords } = await listRecordsMerged(
+            agent,
+            agent.did!,
+            'list'
+          );
+          const collection = listRecords.find(
+            (record) => record.uri === collectionUri
           );
           title = collection?.value?.name || null;
         } else {
@@ -390,13 +393,13 @@ export const createRouter = (ctx: AppContext) => {
             if (oauthSession) {
               const { Agent } = await import('@atproto/api');
               const userAgent = new Agent(oauthSession);
-              const listsResponse =
-                await userAgent.api.com.atproto.repo.listRecords({
-                  repo: shareLink.userDid,
-                  collection: 'app.collectivesocial.feed.list',
-                });
-              const collection = listsResponse.data.records.find(
-                (record: any) => record.uri === shareLink.collectionUri
+              const { records: listRecords } = await listRecordsMerged(
+                userAgent,
+                shareLink.userDid,
+                'list'
+              );
+              const collection = listRecords.find(
+                (record) => record.uri === shareLink.collectionUri
               );
               if (collection?.value?.name) {
                 title = escapeHtml(String(collection.value.name));
@@ -605,17 +608,18 @@ export const createRouter = (ctx: AppContext) => {
         }
 
         // For links with collectionUri, fetch collection names from ATProto
-        const listsResponse = await agent.api.com.atproto.repo.listRecords({
-          repo: agent.did!,
-          collection: 'app.collectivesocial.feed.list',
-        });
+        const { records: listRecords } = await listRecordsMerged(
+          agent,
+          agent.did!,
+          'list'
+        );
 
         // Add full URL and collection names to each link
         const linksWithUrls = shareLinks.map((link) => {
           let collectionName = null;
           if (link.collectionUri) {
-            const collection = listsResponse.data.records.find(
-              (record: any) => record.uri === link.collectionUri
+            const collection = listRecords.find(
+              (record) => record.uri === link.collectionUri
             );
             collectionName = collection?.value?.name || null;
           }

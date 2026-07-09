@@ -744,6 +744,47 @@ migrations['030'] = {
   },
 };
 
+// Migration 031: popfeed lexicon migration tracking on users
+// Tracks per-user progress migrating app.collectivesocial.feed.* records to
+// social.popfeed.feed.* — set from src/services/popfeedMigration.ts, triggered
+// from the /oauth/callback handler in src/routes/auth.ts.
+// ────────────────────────────────────────────────────────────────────────────
+migrations['031'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('users')
+      .addColumn('popfeedMigratedAt', 'timestamptz')
+      .execute();
+
+    await db.schema
+      .alterTable('users')
+      .addColumn('popfeedMigrationStatus', 'varchar(16)', (col) =>
+        col.notNull().defaultTo('pending')
+      )
+      .execute();
+
+    await db.schema
+      .alterTable('users')
+      .addColumn('popfeedMigrationError', 'text')
+      .execute();
+  },
+
+  async down(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('users')
+      .dropColumn('popfeedMigratedAt')
+      .execute();
+    await db.schema
+      .alterTable('users')
+      .dropColumn('popfeedMigrationStatus')
+      .execute();
+    await db.schema
+      .alterTable('users')
+      .dropColumn('popfeedMigrationError')
+      .execute();
+  },
+};
+
 export { migrations, migrationProvider };
 
 export const migrateToLatest = async (db: Kysely<any>) => {

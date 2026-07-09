@@ -25,6 +25,6 @@ describe('migrations', () => {
     const keys = Object.keys(migrations);
     expect(keys).toContain('001');
     // 25 stubs (001 real + 002-025 no-ops) plus room for a few future migrations
-    expect(keys.length).toBeLessThanOrEqual(30);
+    expect(keys.length).toBeLessThanOrEqual(35);
   });
 });
