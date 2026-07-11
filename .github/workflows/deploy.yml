@@ -26,7 +26,7 @@ jobs:
                   docker push ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }}
             - run: |
                   az containerapp update \
-                    --name collective-social-api \
+                    --name collective-social-api-2 \
                     --resource-group open-collective-social \
                     --image ${{ secrets.REGISTRY_LOGIN_SERVER }}/collective-social-api:${{ github.sha }} \
                     --set-env-vars \
